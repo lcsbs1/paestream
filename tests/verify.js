@@ -204,15 +204,53 @@ async function runTests() {
     });
     assert.strictEqual(hostTunnelRes.status, 200);
     const hostTunnel = await hostTunnelRes.json();
-    assert(hostTunnel.hostMobileUrl.includes(server.hostToken), 'GET /api/host/tunnel deve conter hostMobileUrl com token');
-    console.log('[verify] OK: Segurança de Bootstrap localhost-only e rotas POST /api/host/*.');
+    assert(!('hostToken' in hostTunnel), 'GET /api/host/tunnel não pode vazar hostToken');
+    assert(
+      hostTunnel.hostMobileUrl.includes('code=') && !hostTunnel.hostMobileUrl.includes(server.hostToken),
+      'GET /api/host/tunnel deve usar pairing code, não o hostToken longo'
+    );
 
-    // 2. Test GET /api/movies
-    const moviesRes = await fetch(`${baseUrl}${ENDPOINTS.MOVIES}`);
+    const pairingRes = await fetch(`${baseUrl}${ENDPOINTS.HOST_PAIRING}`, {
+      method: 'POST',
+      headers: { 'x-host-token': server.hostToken }
+    });
+    assert.strictEqual(pairingRes.status, 200);
+    const pairingJson = await pairingRes.json();
+    assert(pairingJson.code && pairingJson.expiresAt, 'POST /api/host/pairing deve retornar code');
+
+    const redeemRes = await fetch(`${baseUrl}${ENDPOINTS.HOST_REDEEM_PAIRING}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: pairingJson.code })
+    });
+    assert.strictEqual(redeemRes.status, 200);
+    const redeemJson = await redeemRes.json();
+    assert.strictEqual(redeemJson.hostToken, server.hostToken);
+
+    const redeemAgain = await fetch(`${baseUrl}${ENDPOINTS.HOST_REDEEM_PAIRING}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: pairingJson.code })
+    });
+    assert.strictEqual(redeemAgain.status, 403, 'Código de pareamento deve ser single-use');
+    console.log('[verify] OK: Segurança de Bootstrap, pairing e rotas POST /api/host/*.');
+
+    // 2. Test GET /api/movies (host-only, no absolute paths)
+    const unauthMovies = await fetch(`${baseUrl}${ENDPOINTS.MOVIES}`);
+    assert.strictEqual(unauthMovies.status, 403, 'GET /api/movies sem token deve retornar 403');
+
+    const moviesRes = await fetch(`${baseUrl}${ENDPOINTS.MOVIES}`, {
+      headers: { 'x-host-token': server.hostToken }
+    });
     assert.strictEqual(moviesRes.status, 200);
     const moviesData = await moviesRes.json();
     const sampleMovie = moviesData.movies.find((m) => m.filename === '__test_sample.mkv');
     assert(sampleMovie, 'GET /api/movies deve encontrar __test_sample.mkv');
+    assert(!('path' in sampleMovie), 'MovieItem público não pode expor path absoluto');
+    assert(
+      !(sampleMovie.subtitleTracks || []).some((t) => t && 'path' in t),
+      'SubtitleTrack pública não pode expor path absoluto'
+    );
     assert.strictEqual(sampleMovie.audioTracks.length, 2, 'Deve detectar exatamente 2 faixas de áudio');
     assert(sampleMovie.subtitleTracks.length >= 1, 'Deve detectar a faixa de legenda embutida');
     assert(sampleMovie.duration >= 7 && sampleMovie.duration <= 9, `Duração inesperada: ${sampleMovie.duration}`);
@@ -240,6 +278,10 @@ async function runTests() {
     assert(selectJson.ok, 'select-movie ok deve ser true');
     assert.strictEqual(selectJson.state.baseOffset, 4, 'baseOffset deve ser 4 quando startTime=4');
     assert.strictEqual(selectJson.state.streamEpoch, 1, 'streamEpoch inicial deve ser 1');
+    assert(
+      !(selectJson.state.subtitleTracks || []).some((t) => t && 'path' in t),
+      'room state não pode expor path de legendas'
+    );
 
     const m3u8Res = await fetch(`${baseUrl}${selectJson.state.streamUrl}`);
     assert.strictEqual(m3u8Res.status, 200, 'playlist.m3u8 deve responder 200');
@@ -304,19 +346,33 @@ async function runTests() {
     const guestSocket = ioClient(baseUrl, { transports: ['websocket'] });
     const spoofSocket = ioClient(baseUrl, { transports: ['websocket'] });
     const hostSocket = ioClient(baseUrl, { transports: ['websocket'] });
-    sockets.push(guestSocket, spoofSocket, hostSocket);
+    const straySocket = ioClient(baseUrl, { transports: ['websocket'] });
+    sockets.push(guestSocket, spoofSocket, hostSocket, straySocket);
 
     await Promise.all([
       waitForEvent(guestSocket, 'connect'),
       waitForEvent(spoofSocket, 'connect'),
-      waitForEvent(hostSocket, 'connect')
+      waitForEvent(hostSocket, 'connect'),
+      waitForEvent(straySocket, 'connect')
     ]);
+
+    let leakedChat = false;
+    guestSocket.once(SOCKET_EVENTS.CHAT_MESSAGE, () => {
+      leakedChat = true;
+    });
+    straySocket.emit(SOCKET_EVENTS.CHAT_MESSAGE, { text: 'spam-sem-join' });
+    await sleep(300);
+    assert.strictEqual(leakedChat, false, 'Chat sem room:join não pode ser broadcast');
 
     const guestJoin = await emitWithAck(guestSocket, SOCKET_EVENTS.ROOM_JOIN, {
       role: 'guest',
       displayName: 'Amor'
     });
     assert.strictEqual(guestJoin.role, 'guest');
+    assert(
+      !(guestJoin.state.subtitleTracks || []).some((t) => t && 'path' in t),
+      'room:join state não pode expor path de legendas'
+    );
 
     const spoofErrPromise = waitForEvent(
       spoofSocket,

@@ -205,23 +205,59 @@
     }
   }
 
+  function clearHostAuthParamsFromUrl() {
+    try {
+      const url = new URL(global.location.href);
+      if (!url.searchParams.has('role') && !url.searchParams.has('code') && !url.searchParams.has('token')) {
+        return;
+      }
+      url.searchParams.delete('code');
+      url.searchParams.delete('token');
+      const clean = `${url.pathname}${url.searchParams.toString() ? `?${url.searchParams}` : ''}${url.hash}`;
+      global.history.replaceState({}, '', clean);
+    } catch (_err) {
+      // Ignore history API failures
+    }
+  }
+
   async function detectRoleAndToken() {
     const params = new URLSearchParams(global.location.search);
     const urlRole = params.get('role');
-    const urlToken = params.get('token');
+    const urlCode = params.get('code');
+
+    if (urlRole === 'host' && urlCode) {
+      try {
+        const res = await fetch(ENDPOINTS.HOST_REDEEM_PAIRING, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: urlCode }),
+          cache: 'no-store'
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data && data.hostToken) {
+          try {
+            global.sessionStorage.setItem('paestream_host_token', data.hostToken);
+          } catch (_err) {
+            // Ignore storage restrictions
+          }
+          try {
+            global.history.replaceState({}, '', global.location.pathname);
+          } catch (_err) {
+            // Ignore
+          }
+          return { role: 'host', hostToken: data.hostToken, source: 'mobile-url' };
+        }
+      } catch (_err) {
+        // Fall through to other host detection paths
+      }
+      clearHostAuthParamsFromUrl();
+    }
 
     if (urlRole === 'host') {
-      if (urlToken) {
-        try {
-          global.sessionStorage.setItem('paestream_host_token', urlToken);
-        } catch (_err) {
-          // Ignore storage restrictions
-        }
-        return { role: 'host', hostToken: urlToken, source: 'mobile-url' };
-      }
       try {
         const saved = global.sessionStorage.getItem('paestream_host_token');
         if (saved) {
+          clearHostAuthParamsFromUrl();
           return { role: 'host', hostToken: saved, source: 'mobile-url' };
         }
       } catch (_err) {
@@ -237,6 +273,11 @@
         if (res.ok) {
           const data = await res.json();
           if (data && data.hostToken) {
+            try {
+              global.sessionStorage.setItem('paestream_host_token', data.hostToken);
+            } catch (_err) {
+              // Ignore
+            }
             return { role: 'host', hostToken: data.hostToken, source: 'localhost' };
           }
         }
@@ -527,11 +568,7 @@
   async function loadMovieLibrary() {
     if (role !== 'host') return;
     try {
-      const res = await fetch(ENDPOINTS.MOVIES, { cache: 'no-store' });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data?.error || 'Falha ao carregar filmes.');
-      }
+      const data = await hostFetch(ENDPOINTS.MOVIES, { cache: 'no-store' });
       renderLibraryData(data);
     } catch (err) {
       showToast(err.message || 'Não foi possível listar filmes.', true);
