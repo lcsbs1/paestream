@@ -1,6 +1,6 @@
 # PaeStream
 
-Servidor local de cinema privado (watch party) para 2 pessoas: host escolhe o filme no PC, convidada assiste sincronizado pelo navegador. Inclui HLS via FFmpeg, legendas, chat, WebRTC (voz/video) e tunel Cloudflare opcional.
+Servidor local de cinema privado (watch party) para 2 pessoas: host escolhe o filme no PC, convidada assiste sincronizado pelo navegador. Inclui HLS via FFmpeg, legendas, WebRTC (voz/video) e tunel Cloudflare opcional.
 
 ## Requisitos
 
@@ -41,7 +41,7 @@ npm start
 
 - Acoes de host exigem token; `/api/movies` tambem.
 - Respostas publicas nao incluem caminhos absolutos do disco.
-- Link de convidada da acesso a sessao (assista/chat). Trate como secreto de sessao.
+- Link de convidada da acesso a sessao (assista/voz). Trate como secreto de sessao.
 - Token longo nao vai mais na URL do host mobile.
 
 ## Estrutura

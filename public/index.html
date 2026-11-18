@@ -133,9 +133,6 @@
             <span>Toque para liberar som e sincronizar vídeo</span>
           </button>
 
-          <!-- Floating Reaction Overlay -->
-          <div id="reactionLayer" class="reaction-layer" aria-hidden="true"></div>
-
           <!-- Floating WebRTC Video Call PiP -->
           <div id="callPipOverlay" class="call-pip-overlay" hidden>
             <div class="call-pip-remote-wrap">
@@ -295,8 +292,8 @@
         </div>
       </section>
 
-      <!-- Right / Bottom: Comms, Audio Mixer, Reactions & Chat -->
-      <aside id="commsLounge" class="comms-lounge" aria-label="Voz, Volumes e Chat">
+      <!-- Right / Bottom: Comms & Audio Mixer -->
+      <aside id="commsLounge" class="comms-lounge" aria-label="Voz e Volumes">
         <!-- Call & Volume Panel -->
         <section class="comms-toolbar">
           <div class="call-controls-row">
@@ -358,34 +355,6 @@
               </label>
             </div>
           </div>
-        </section>
-
-        <!-- Chat & Reactions -->
-        <section class="chat-section">
-          <div id="chatMessages" class="chat-messages" aria-live="polite">
-            <div class="chat-empty-hint">
-              Mandem mensagens ou reações enquanto assistem juntos.
-            </div>
-          </div>
-
-          <div id="reactionBar" class="reaction-bar" aria-label="Reações rápidas"></div>
-
-          <form id="chatForm" class="chat-form">
-            <label for="chatInput" class="sr-only">Mensagem do chat</label>
-            <input
-              id="chatInput"
-              type="text"
-              placeholder="Mensagem para a sessão..."
-              maxlength="400"
-              autocomplete="off"
-            >
-            <button id="chatSendBtn" type="submit" class="btn-primary btn-send" aria-label="Enviar mensagem">
-              <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <line x1="22" y1="2" x2="11" y2="13"></line>
-                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-              </svg>
-            </button>
-          </form>
         </section>
       </aside>
     </main>

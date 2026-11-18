@@ -397,13 +397,13 @@ async function runTests() {
       waitForEvent(straySocket, 'connect')
     ]);
 
-    let leakedChat = false;
-    guestSocket.once(SOCKET_EVENTS.CHAT_MESSAGE, () => {
-      leakedChat = true;
+    let leakedWebrtc = false;
+    guestSocket.once(SOCKET_EVENTS.WEBRTC_SIGNAL, () => {
+      leakedWebrtc = true;
     });
-    straySocket.emit(SOCKET_EVENTS.CHAT_MESSAGE, { text: 'spam-sem-join' });
+    straySocket.emit(SOCKET_EVENTS.WEBRTC_SIGNAL, { type: 'offer', payload: { sdp: 'spam' } });
     await sleep(300);
-    assert.strictEqual(leakedChat, false, 'Chat sem room:join não pode ser broadcast');
+    assert.strictEqual(leakedWebrtc, false, 'WebRTC sem room:join não pode ser broadcast');
 
     const guestJoin = await emitWithAck(guestSocket, SOCKET_EVENTS.ROOM_JOIN, {
       role: 'guest',
@@ -550,23 +550,7 @@ async function runTests() {
     hostSocket.emit(SOCKET_EVENTS.HOST_TIME_UPDATE, { currentTime: 3.2, isPlaying: false });
     await pulsePromise;
 
-    // Chat & Reaction & WebRTC signal relay
-    const chatPromise = waitForEvent(
-      guestSocket,
-      SOCKET_EVENTS.CHAT_MESSAGE,
-      (m) => m.text === 'Pipoca pronta!' && m.role === 'host'
-    );
-    hostSocket.emit(SOCKET_EVENTS.CHAT_MESSAGE, { text: 'Pipoca pronta!', role: 'guest' });
-    await chatPromise;
-
-    const reactionPromise = waitForEvent(
-      hostSocket,
-      SOCKET_EVENTS.CHAT_REACTION,
-      (r) => r.emoji === '❤️' && r.role === 'guest'
-    );
-    guestSocket.emit(SOCKET_EVENTS.CHAT_REACTION, { emoji: '❤️', role: 'host' });
-    await reactionPromise;
-
+    // WebRTC signal relay
     const webrtcPromise = waitForEvent(
       guestSocket,
       SOCKET_EVENTS.WEBRTC_SIGNAL,
@@ -578,7 +562,7 @@ async function runTests() {
     });
     await webrtcPromise;
 
-    console.log('[verify] OK: Todos os comandos Socket.io (play, pause, seek, set-audio, set-subtitle, sync:pulse, chat, reações, WebRTC) validados.');
+    console.log('[verify] OK: Todos os comandos Socket.io (play, pause, seek, set-audio, set-subtitle, sync:pulse, WebRTC) validados.');
     console.log('✅ TODOS OS TESTES DO PAESTREAM PASSARAM COM 100% DE SUCESSO!');
   } finally {
     for (const sock of sockets) {

@@ -31,7 +31,6 @@
     videoBufferingBadge: document.getElementById('videoBufferingBadge'),
     bufferingText: document.getElementById('bufferingText'),
     autoplayUnlockBanner: document.getElementById('autoplayUnlockBanner'),
-    reactionLayer: document.getElementById('reactionLayer'),
     hudMovieTitle: document.getElementById('hudMovieTitle'),
     hudPartnerVoiceBadge: document.getElementById('hudPartnerVoiceBadge'),
     pipBtn: document.getElementById('pipBtn'),
@@ -85,10 +84,6 @@
     voiceVolumeSlider: document.getElementById('voiceVolumeSlider'),
     voiceVolumeValue: document.getElementById('voiceVolumeValue'),
     autoDuckToggle: document.getElementById('autoDuckToggle'),
-    chatMessages: document.getElementById('chatMessages'),
-    reactionBar: document.getElementById('reactionBar'),
-    chatForm: document.getElementById('chatForm'),
-    chatInput: document.getElementById('chatInput'),
 
     // Modals (Host-only)
     libraryModal: document.getElementById('libraryModal'),
@@ -751,14 +746,6 @@
       if (err.message) {
         showToast(err.message, true);
       }
-    });
-
-    socket.on(SOCKET_EVENTS.CHAT_MESSAGE, (msg) => {
-      comms.appendChatMessage(msg);
-    });
-
-    socket.on(SOCKET_EVENTS.CHAT_REACTION, (reaction) => {
-      comms.spawnFloatingReaction(reaction);
     });
 
     socket.on(SOCKET_EVENTS.WEBRTC_SIGNAL, (signal) => {

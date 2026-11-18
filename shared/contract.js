@@ -49,8 +49,6 @@
    * - HOST_TIME_UPDATE: { currentTime: number, isPlaying: boolean }
    * - SYNC_PULSE:       { hostTime: number, isPlaying: boolean, streamEpoch: number, baseOffset: number, serverTimestamp: number }
    * - HOST_ERROR:       { code: string, message: string }
-   * - CHAT_MESSAGE:     { id: string, sender: string, role: 'host' | 'guest', text: string, timestamp: number }
-   * - CHAT_REACTION:    { emoji: string, sender: string, role: 'host' | 'guest' }
    * - WEBRTC_SIGNAL:    { type: 'offer' | 'answer' | 'candidate' | 'call-state', payload: any, fromRole?: 'host' | 'guest' }
    */
   const SOCKET_EVENTS = Object.freeze({
@@ -60,16 +58,11 @@
     HOST_TIME_UPDATE: 'host:time-update',
     SYNC_PULSE: 'sync:pulse',
     HOST_ERROR: 'host:error',
-    CHAT_MESSAGE: 'chat:message',
-    CHAT_REACTION: 'chat:reaction',
     WEBRTC_SIGNAL: 'webrtc:signal'
   });
 
-  const REACTIONS = Object.freeze(['❤️', '🥰', '😂', '😱', '🔥', '😢']);
-
   return Object.freeze({
     ENDPOINTS,
-    SOCKET_EVENTS,
-    REACTIONS
+    SOCKET_EVENTS
   });
 });

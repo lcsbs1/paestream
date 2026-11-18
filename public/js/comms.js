@@ -10,7 +10,7 @@
       onToast
     } = options;
 
-    const { SOCKET_EVENTS, REACTIONS } = contract;
+    const { SOCKET_EVENTS } = contract;
 
     let role = 'guest';
     let myName = '';
@@ -59,13 +59,6 @@
         { urls: 'stun:stun1.l.google.com:19302' }
       ]
     };
-
-    function formatClockTime(ts) {
-      const d = new Date(ts || Date.now());
-      const hh = String(d.getHours()).padStart(2, '0');
-      const mm = String(d.getMinutes()).padStart(2, '0');
-      return `${hh}:${mm}`;
-    }
 
     function ensureAudioContext() {
       const AudioContextCtor = global.AudioContext || global.webkitAudioContext;
@@ -631,96 +624,6 @@
       }
     }
 
-    function appendChatMessage(msg) {
-      const list = elements.chatMessages;
-      if (!list || !msg) return;
-
-      const emptyHint = list.querySelector('.chat-empty-hint');
-      if (emptyHint) emptyHint.remove();
-
-      const isMine = msg.role === role && msg.sender === myName;
-
-      const item = document.createElement('div');
-      item.className = `chat-msg${isMine ? ' is-mine' : ''}`;
-
-      const meta = document.createElement('div');
-      meta.className = 'chat-msg-meta';
-
-      const senderEl = document.createElement('span');
-      senderEl.className = 'chat-msg-sender';
-      senderEl.textContent = msg.sender || (msg.role === 'host' ? 'Host' : 'Convidada');
-
-      const roleEl = document.createElement('span');
-      roleEl.className = 'chat-msg-role';
-      roleEl.textContent = msg.role === 'host' ? 'Host' : 'Amor';
-
-      const timeEl = document.createElement('span');
-      timeEl.className = 'chat-msg-time';
-      timeEl.textContent = formatClockTime(msg.timestamp);
-
-      meta.appendChild(senderEl);
-      meta.appendChild(roleEl);
-      meta.appendChild(timeEl);
-
-      const textEl = document.createElement('div');
-      textEl.className = 'chat-msg-text';
-      textEl.textContent = String(msg.text || '');
-
-      item.appendChild(meta);
-      item.appendChild(textEl);
-      list.appendChild(item);
-
-      list.scrollTop = list.scrollHeight;
-    }
-
-    function spawnFloatingReaction(reaction) {
-      const layer = elements.reactionLayer;
-      if (!layer || !reaction || !reaction.emoji) return;
-
-      const node = document.createElement('div');
-      node.className = 'floating-reaction';
-      const leftPct = 12 + Math.random() * 72;
-      const driftPx = Math.round((Math.random() - 0.5) * 56);
-      node.style.left = `${leftPct.toFixed(1)}%`;
-      node.style.setProperty('--drift-x', `${driftPx}px`);
-
-      const emojiSpan = document.createElement('span');
-      emojiSpan.textContent = String(reaction.emoji);
-      node.appendChild(emojiSpan);
-
-      if (reaction.sender) {
-        const senderTag = document.createElement('span');
-        senderTag.className = 'floating-reaction-sender';
-        senderTag.textContent = String(reaction.sender);
-        node.appendChild(senderTag);
-      }
-
-      layer.appendChild(node);
-
-      const cleanup = () => {
-        if (node.parentNode) node.remove();
-      };
-      node.addEventListener('animationend', cleanup, { once: true });
-      setTimeout(cleanup, 2700);
-    }
-
-    function renderReactionButtons() {
-      const bar = elements.reactionBar;
-      if (!bar) return;
-      bar.innerHTML = '';
-      (REACTIONS || []).forEach((emoji) => {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'reaction-btn';
-        btn.textContent = emoji;
-        btn.setAttribute('aria-label', `Enviar reação ${emoji}`);
-        btn.addEventListener('click', () => {
-          emitSocket(SOCKET_EVENTS.CHAT_REACTION, { emoji });
-        });
-        bar.appendChild(btn);
-      });
-    }
-
     function setSessionIdentity(nextRole, displayName) {
       role = nextRole === 'host' ? 'host' : 'guest';
       myName = displayName || (role === 'host' ? 'Lucas' : 'Amor');
@@ -754,7 +657,6 @@
     }
 
     // Wire UI events
-    renderReactionButtons();
     startDuckingMonitor();
 
     elements.toggleMicBtn?.addEventListener('click', () => {
@@ -790,23 +692,11 @@
       }
     });
 
-    elements.chatForm?.addEventListener('submit', (e) => {
-      e.preventDefault();
-      const input = elements.chatInput;
-      if (!input) return;
-      const text = input.value.trim();
-      if (!text) return;
-      emitSocket(SOCKET_EVENTS.CHAT_MESSAGE, { text });
-      input.value = '';
-    });
-
     return {
       unlockAudio,
       setSessionIdentity,
       updateRoomPresence,
       handleWebRtcSignal,
-      appendChatMessage,
-      spawnFloatingReaction,
       setMovieVolumePercent,
       setVoiceVolumePercent
     };
