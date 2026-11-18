@@ -1,0 +1,19 @@
+{
+  "name": "paestream",
+  "version": "1.0.0",
+  "description": "Private Watch Party Cinema Server with FFmpeg HLS transcoding, synced subtitles, Socket.io sync, WebRTC voice/video and Cloudflare tunnel",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "test": "node tests/verify.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "qrcode": "^1.5.4",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.8.1"
+  }
+}

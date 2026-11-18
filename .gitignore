@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Runtime / generated
+temp/
+data/config.json
+
+# Local media library (do not publish personal files)
+movies/**
+!movies/.gitkeep
+
+# Binaries downloaded at runtime
+bin/**
+!bin/.gitkeep
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.log
+.env
+.env.*
