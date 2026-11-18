@@ -10,7 +10,8 @@ const { io: ioClient } = require('socket.io-client');
 const { ENDPOINTS, SOCKET_EVENTS } = require('../shared/contract');
 const { resolveFfmpegBinaries } = require('../server/mediaScanner');
 const { decodeTextBuffer, normalizeToVtt, shiftVtt } = require('../server/subtitleService');
-const { startServer } = require('../server/index');
+const { startServer, getClientIp } = require('../server/index');
+const { folderLabelForClient } = require('../server/publicData');
 
 const execFileAsync = promisify(execFile);
 
@@ -210,6 +211,31 @@ async function runTests() {
       'GET /api/host/tunnel deve usar pairing code, não o hostToken longo'
     );
 
+    const hostTunnelAgainRes = await fetch(`${baseUrl}${ENDPOINTS.HOST_TUNNEL}`, {
+      headers: { 'x-host-token': server.hostToken }
+    });
+    const hostTunnelAgain = await hostTunnelAgainRes.json();
+    assert.strictEqual(
+      hostTunnelAgain.hostMobileUrl,
+      hostTunnel.hostMobileUrl,
+      'Polls de /api/host/tunnel devem reutilizar o mesmo código de pareamento'
+    );
+
+    const fakeReqBehindProxy = {
+      socket: { remoteAddress: '127.0.0.1' },
+      headers: { 'cf-connecting-ip': '203.0.113.77' }
+    };
+    assert.strictEqual(getClientIp(fakeReqBehindProxy), '203.0.113.77');
+    const fakeReqLan = {
+      socket: { remoteAddress: '192.168.1.20' },
+      headers: { 'cf-connecting-ip': '203.0.113.77', 'x-forwarded-for': '198.51.100.9' }
+    };
+    assert.strictEqual(
+      getClientIp(fakeReqLan),
+      '192.168.1.20',
+      'IP de proxy não deve ser confiado quando o peer não é loopback'
+    );
+
     const pairingRes = await fetch(`${baseUrl}${ENDPOINTS.HOST_PAIRING}`, {
       method: 'POST',
       headers: { 'x-host-token': server.hostToken }
@@ -233,7 +259,7 @@ async function runTests() {
       body: JSON.stringify({ code: pairingJson.code })
     });
     assert.strictEqual(redeemAgain.status, 403, 'Código de pareamento deve ser single-use');
-    console.log('[verify] OK: Segurança de Bootstrap, pairing e rotas POST /api/host/*.');
+    console.log('[verify] OK: Segurança de Bootstrap, pairing cache e rotas POST /api/host/*.');
 
     // 2. Test GET /api/movies (host-only, no absolute paths)
     const unauthMovies = await fetch(`${baseUrl}${ENDPOINTS.MOVIES}`);
@@ -250,6 +276,15 @@ async function runTests() {
     assert(
       !(sampleMovie.subtitleTracks || []).some((t) => t && 'path' in t),
       'SubtitleTrack pública não pode expor path absoluto'
+    );
+    assert.strictEqual(
+      sampleMovie.folder,
+      folderLabelForClient(MOVIES_DIR),
+      'Movie.folder deve ser apenas o basename da pasta'
+    );
+    assert(
+      !(moviesData.folders || []).some((f) => typeof f === 'string' && (f.includes('/') || f.includes('\\'))),
+      'folders[] não pode expor paths absolutos'
     );
     assert.strictEqual(sampleMovie.audioTracks.length, 2, 'Deve detectar exatamente 2 faixas de áudio');
     assert(sampleMovie.subtitleTracks.length >= 1, 'Deve detectar a faixa de legenda embutida');
@@ -317,9 +352,15 @@ async function runTests() {
     assert.strictEqual(vttShiftedRes.status, 200);
     const vttShifted = await vttShiftedRes.text();
     assert(!vttShifted.includes('Antes do offset'), 'Cue anterior ao offset=2 deve ser descartado');
+    // FFmpeg cue extraction can round by tens of ms depending on build/container.
+    const shiftedCueMatch = vttShifted.match(/(\d{2}):(\d{2}):(\d{2})\.(\d{3}) --> (\d{2}):(\d{2}):(\d{2})\.(\d{3})/);
+    assert(shiftedCueMatch, `Cue deslocado ausente no VTT. Recebido:\n${vttShifted}`);
+    const toMs = (h, m, s, ms) => (((Number(h) * 60 + Number(m)) * 60 + Number(s)) * 1000) + Number(ms);
+    const startMs = toMs(shiftedCueMatch[1], shiftedCueMatch[2], shiftedCueMatch[3], shiftedCueMatch[4]);
+    const endMs = toMs(shiftedCueMatch[5], shiftedCueMatch[6], shiftedCueMatch[7], shiftedCueMatch[8]);
     assert(
-      vttShifted.includes('00:00:01.000 --> 00:00:03.500'),
-      `Cue 2 deveria estar deslocado para 00:00:01.000 --> 00:00:03.500. Recebido:\n${vttShifted}`
+      Math.abs(startMs - 1000) <= 50 && Math.abs(endMs - 3500) <= 50,
+      `Cue 2 deveria estar ~00:00:01.000 --> 00:00:03.500 (±50ms). Recebido:\n${vttShifted}`
     );
     console.log('[verify] OK: HLS playlist.m3u8 + .ts válidos e legenda .vtt com ?offset=2 deslocada corretamente.');
 
