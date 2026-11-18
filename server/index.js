@@ -13,6 +13,12 @@ const { createSubtitleService } = require('./subtitleService');
 const { createHlsManager } = require('./hlsManager');
 const { createRoomSync } = require('./roomSync');
 const { createTunnelManager } = require('./tunnelManager');
+const { createHostPairing } = require('./hostPairing');
+const {
+  sanitizeMoviesPayload,
+  sanitizeSubtitleTrackForClient,
+  sanitizeRoomStateForClient
+} = require('./publicData');
 
 const LOCALHOST_IPS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const PROXY_HEADERS = [
@@ -78,12 +84,28 @@ async function startServer(options = {}) {
     }
   });
 
+  const hostPairing = createHostPairing({ getHostToken: () => hostToken });
+
   const roomSync = createRoomSync({
     io,
     mediaScanner,
     hlsManager,
     getHostToken: () => hostToken
   });
+
+  const redeemRateLimiter = (() => {
+    const hits = new Map();
+    return (key) => {
+      const now = Date.now();
+      let entry = hits.get(key);
+      if (!entry || now - entry.start >= 60_000) {
+        entry = { start: now, count: 0 };
+        hits.set(key, entry);
+      }
+      entry.count += 1;
+      return entry.count <= 10;
+    };
+  })();
 
   app.use(
     cors({
@@ -124,10 +146,10 @@ async function startServer(options = {}) {
     return res.json({ hostToken });
   });
 
-  app.get(ENDPOINTS.MOVIES, async (req, res) => {
+  app.get(ENDPOINTS.MOVIES, requireHostToken, async (req, res) => {
     try {
       const data = await mediaScanner.scanMovies();
-      return res.json(data);
+      return res.json(sanitizeMoviesPayload(data));
     } catch (err) {
       return res.status(500).json({ error: err.message || 'Erro ao escanear filmes.' });
     }
@@ -137,7 +159,11 @@ async function startServer(options = {}) {
     try {
       const { folderPath } = req.body || {};
       const result = await mediaScanner.addFolder(folderPath);
-      return res.json({ ok: true, ...result });
+      return res.json({
+        ok: true,
+        folderPath: result.folderPath,
+        ...sanitizeMoviesPayload(result)
+      });
     } catch (err) {
       return res.status(err.statusCode || 500).json({ error: err.message });
     }
@@ -155,7 +181,7 @@ async function startServer(options = {}) {
         subtitleId,
         startTime
       });
-      return res.json({ ok: true, state });
+      return res.json({ ok: true, state: sanitizeRoomStateForClient(state) });
     } catch (err) {
       return res.status(err.statusCode || 500).json({ error: err.message });
     }
@@ -166,7 +192,39 @@ async function startServer(options = {}) {
       const { movieId, filename, content } = req.body || {};
       const subtitleTrack = subtitleService.uploadSubtitle({ movieId, filename, content });
       const state = roomSync.onSubtitleUploaded(movieId, subtitleTrack);
-      return res.json({ ok: true, subtitleTrack, state });
+      return res.json({
+        ok: true,
+        subtitleTrack: sanitizeSubtitleTrackForClient(subtitleTrack),
+        state: sanitizeRoomStateForClient(state)
+      });
+    } catch (err) {
+      return res.status(err.statusCode || 500).json({ error: err.message });
+    }
+  });
+
+  app.post(ENDPOINTS.HOST_PAIRING, (req, res) => {
+    if (!hasValidHostToken(req) && !isLocalhostRequest(req)) {
+      return res.status(403).json({ error: 'Acesso negado ao pareamento do Host.' });
+    }
+    const pairing = hostPairing.createCode();
+    return res.json({
+      ok: true,
+      code: pairing.code,
+      expiresAt: pairing.expiresAt
+    });
+  });
+
+  app.post(ENDPOINTS.HOST_REDEEM_PAIRING, (req, res) => {
+    const clientKey = String(
+      (req.socket && req.socket.remoteAddress) || req.ip || 'unknown'
+    );
+    if (!redeemRateLimiter(clientKey)) {
+      return res.status(429).json({ error: 'Muitas tentativas de pareamento. Aguarde um minuto.' });
+    }
+    try {
+      const { code } = req.body || {};
+      const redeemed = hostPairing.redeemCode(code);
+      return res.json({ ok: true, hostToken: redeemed.hostToken });
     } catch (err) {
       return res.status(err.statusCode || 500).json({ error: err.message });
     }
@@ -224,8 +282,8 @@ async function startServer(options = {}) {
   const tunnelManager = createTunnelManager({
     rootDir,
     port: actualPort,
-    hostToken,
-    enabled: enableTunnel
+    enabled: enableTunnel,
+    createHostPairingCode: () => hostPairing.createCode()
   });
 
   app.get(ENDPOINTS.TUNNEL, (req, res) => {
@@ -236,7 +294,8 @@ async function startServer(options = {}) {
     if (!hasValidHostToken(req) && !isLocalhostRequest(req)) {
       return res.status(403).json({ error: 'Acesso negado ao link privado do Host.' });
     }
-    return res.json(tunnelManager.getHostInfo());
+    const hostInfo = tunnelManager.getHostInfo();
+    return res.json(hostInfo);
   });
 
   await tunnelManager.start();

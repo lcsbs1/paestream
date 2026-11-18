@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const { ENDPOINTS, SOCKET_EVENTS } = require('../shared/contract');
 const { timingSafeMatch } = require('./mediaScanner');
+const { sanitizeRoomStateForClient } = require('./publicData');
 
 function buildSubtitleUrl(subtitleId, baseOffset) {
   if (!subtitleId) return null;
@@ -10,7 +11,24 @@ function buildSubtitleUrl(subtitleId, baseOffset) {
   return `${ENDPOINTS.SUBTITLE_BASE}/${encodeURIComponent(subtitleId)}.vtt?offset=${safeOffset}`;
 }
 
+function createRateLimiter({ windowMs, max }) {
+  const hits = new Map();
+  return (key) => {
+    const now = Date.now();
+    let entry = hits.get(key);
+    if (!entry || now - entry.start >= windowMs) {
+      entry = { start: now, count: 0 };
+      hits.set(key, entry);
+    }
+    entry.count += 1;
+    return entry.count <= max;
+  };
+}
+
 function createRoomSync({ io, mediaScanner, hlsManager, getHostToken }) {
+  const allowChat = createRateLimiter({ windowMs: 60_000, max: 20 });
+  const allowReaction = createRateLimiter({ windowMs: 60_000, max: 40 });
+  const allowWebrtc = createRateLimiter({ windowMs: 60_000, max: 120 });
   const state = {
     movieId: null,
     movieTitle: '',
@@ -64,7 +82,7 @@ function createRoomSync({ io, mediaScanner, hlsManager, getHostToken }) {
 
   function getPublicState() {
     refreshPresence();
-    return {
+    return sanitizeRoomStateForClient({
       movieId: state.movieId,
       movieTitle: state.movieTitle,
       duration: state.duration,
@@ -82,7 +100,7 @@ function createRoomSync({ io, mediaScanner, hlsManager, getHostToken }) {
       hostConnected: state.hostConnected,
       guestConnected: state.guestConnected,
       users: state.users
-    };
+    });
   }
 
   function emitRoomState() {
@@ -371,6 +389,8 @@ function createRoomSync({ io, mediaScanner, hlsManager, getHostToken }) {
     });
 
     socket.on(SOCKET_EVENTS.CHAT_MESSAGE, (payload = {}) => {
+      if (!socket.data || !socket.data.joined) return;
+      if (!allowChat(socket.id)) return;
       const text = typeof payload.text === 'string' ? payload.text.trim() : '';
       if (!text) return;
 
@@ -384,6 +404,8 @@ function createRoomSync({ io, mediaScanner, hlsManager, getHostToken }) {
     });
 
     socket.on(SOCKET_EVENTS.CHAT_REACTION, (payload = {}) => {
+      if (!socket.data || !socket.data.joined) return;
+      if (!allowReaction(socket.id)) return;
       const emoji = typeof payload.emoji === 'string' ? payload.emoji.trim() : '';
       if (!emoji || emoji.length > 16) return;
 
@@ -395,6 +417,8 @@ function createRoomSync({ io, mediaScanner, hlsManager, getHostToken }) {
     });
 
     socket.on(SOCKET_EVENTS.WEBRTC_SIGNAL, (payload = {}) => {
+      if (!socket.data || !socket.data.joined) return;
+      if (!allowWebrtc(socket.id)) return;
       if (!payload || typeof payload !== 'object' || !payload.type) return;
       socket.broadcast.emit(SOCKET_EVENTS.WEBRTC_SIGNAL, {
         type: payload.type,

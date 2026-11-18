@@ -14,14 +14,16 @@
   /**
    * REST API endpoints exposed by PaeStream server.
    *
-   * - GET  ENDPOINTS.MOVIES -> { movies: MovieItem[], folders: string[] }
+   * - GET  ENDPOINTS.MOVIES -> (x-host-token) { movies: MovieItem[], folders: string[] }  // no absolute file paths
    * - GET  ENDPOINTS.HOST_BOOTSTRAP -> (localhost only) { hostToken: string }
    * - POST ENDPOINTS.HOST_ADD_FOLDER -> body: { folderPath: string } -> { ok: true, folderPath: string, folders: string[], movies: MovieItem[] }
    * - POST ENDPOINTS.HOST_SELECT_MOVIE -> body: { movieId: string, audioIndex?: number, subtitleId?: string|null, startTime?: number } -> { ok: true, state: RoomState }
    * - POST ENDPOINTS.HOST_UPLOAD_SUBTITLE -> body: { movieId: string, filename: string, content: string } -> { ok: true, subtitleTrack: SubtitleTrack, state: RoomState }
+   * - POST ENDPOINTS.HOST_PAIRING -> (x-host-token or localhost) { ok: true, code: string, expiresAt: number }
+   * - POST ENDPOINTS.HOST_REDEEM_PAIRING -> body: { code: string } -> { ok: true, hostToken: string } (single-use)
    * - GET  `${ENDPOINTS.SUBTITLE_BASE}/${subtitleId}.vtt?offset=${sec}` -> text/vtt
    * - GET  ENDPOINTS.TUNNEL -> { publicUrl: string|null, lanUrl: string, guestUrl: string, qrCodeDataUrl: string|null, status: string }
-   * - GET  ENDPOINTS.HOST_TUNNEL -> (x-host-token or localhost) { ...publicTunnel, hostMobileUrl: string, hostToken: string, hostQrCodeDataUrl: string|null }
+   * - GET  ENDPOINTS.HOST_TUNNEL -> (x-host-token or localhost) { ...publicTunnel, hostMobileUrl: string, hostQrCodeDataUrl: string|null }
    * - GET  `${ENDPOINTS.HLS_BASE}/${sessionId}/playlist.m3u8` -> application/vnd.apple.mpegurl
    */
   const ENDPOINTS = Object.freeze({
@@ -30,6 +32,8 @@
     HOST_ADD_FOLDER: '/api/host/add-folder',
     HOST_SELECT_MOVIE: '/api/host/select-movie',
     HOST_UPLOAD_SUBTITLE: '/api/host/upload-subtitle',
+    HOST_PAIRING: '/api/host/pairing',
+    HOST_REDEEM_PAIRING: '/api/host/redeem-pairing',
     HOST_TUNNEL: '/api/host/tunnel',
     SUBTITLE_BASE: '/api/subtitles',
     TUNNEL: '/api/tunnel',
