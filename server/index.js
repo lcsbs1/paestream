@@ -15,6 +15,7 @@ const { createRoomSync } = require('./roomSync');
 const { createTunnelManager } = require('./tunnelManager');
 const { createHostPairing } = require('./hostPairing');
 const {
+  folderLabelForClient,
   sanitizeMoviesPayload,
   sanitizeSubtitleTrackForClient,
   sanitizeRoomStateForClient
@@ -38,6 +39,30 @@ function extractHostHeaderName(hostHeader) {
   }
   const colonIdx = trimmed.indexOf(':');
   return colonIdx !== -1 ? trimmed.slice(0, colonIdx) : trimmed;
+}
+
+function firstForwardedIp(value) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const first = value.split(',')[0].trim();
+  return first || null;
+}
+
+/**
+ * Prefer real client IP behind cloudflared/proxies. Only trust proxy headers when the
+ * immediate peer is loopback (typical for local cloudflared); otherwise use socket IP
+ * so LAN clients cannot spoof rate-limit keys.
+ */
+function getClientIp(req) {
+  const remoteAddr = (req.socket && req.socket.remoteAddress) || req.ip || '';
+  if (LOCALHOST_IPS.has(remoteAddr)) {
+    const cfIp = firstForwardedIp(req.headers['cf-connecting-ip']);
+    if (cfIp) return cfIp;
+    const xff = firstForwardedIp(req.headers['x-forwarded-for']);
+    if (xff) return xff;
+    const realIp = firstForwardedIp(req.headers['x-real-ip']);
+    if (realIp) return realIp;
+  }
+  return remoteAddr || 'unknown';
 }
 
 function isLocalhostRequest(req) {
@@ -161,7 +186,7 @@ async function startServer(options = {}) {
       const result = await mediaScanner.addFolder(folderPath);
       return res.json({
         ok: true,
-        folderPath: result.folderPath,
+        folder: folderLabelForClient(result.folderPath),
         ...sanitizeMoviesPayload(result)
       });
     } catch (err) {
@@ -215,9 +240,7 @@ async function startServer(options = {}) {
   });
 
   app.post(ENDPOINTS.HOST_REDEEM_PAIRING, (req, res) => {
-    const clientKey = String(
-      (req.socket && req.socket.remoteAddress) || req.ip || 'unknown'
-    );
+    const clientKey = getClientIp(req);
     if (!redeemRateLimiter(clientKey)) {
       return res.status(429).json({ error: 'Muitas tentativas de pareamento. Aguarde um minuto.' });
     }
@@ -283,7 +306,7 @@ async function startServer(options = {}) {
     rootDir,
     port: actualPort,
     enabled: enableTunnel,
-    createHostPairingCode: () => hostPairing.createCode()
+    createHostPairingCode: () => hostPairing.getOrCreateLiveCode()
   });
 
   app.get(ENDPOINTS.TUNNEL, (req, res) => {
@@ -351,5 +374,6 @@ if (require.main === module) {
 
 module.exports = {
   startServer,
-  isLocalhostRequest
+  isLocalhostRequest,
+  getClientIp
 };

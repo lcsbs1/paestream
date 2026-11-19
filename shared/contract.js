@@ -16,7 +16,7 @@
    *
    * - GET  ENDPOINTS.MOVIES -> (x-host-token) { movies: MovieItem[], folders: string[] }  // no absolute file paths
    * - GET  ENDPOINTS.HOST_BOOTSTRAP -> (localhost only) { hostToken: string }
-   * - POST ENDPOINTS.HOST_ADD_FOLDER -> body: { folderPath: string } -> { ok: true, folderPath: string, folders: string[], movies: MovieItem[] }
+   * - POST ENDPOINTS.HOST_ADD_FOLDER -> body: { folderPath: string } -> { ok: true, folder: string, folders: string[], movies: MovieItem[] }  // folder labels only (basename)
    * - POST ENDPOINTS.HOST_SELECT_MOVIE -> body: { movieId: string, audioIndex?: number, subtitleId?: string|null, startTime?: number } -> { ok: true, state: RoomState }
    * - POST ENDPOINTS.HOST_UPLOAD_SUBTITLE -> body: { movieId: string, filename: string, content: string } -> { ok: true, subtitleTrack: SubtitleTrack, state: RoomState }
    * - POST ENDPOINTS.HOST_PAIRING -> (x-host-token or localhost) { ok: true, code: string, expiresAt: number }

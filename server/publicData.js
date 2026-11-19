@@ -1,8 +1,17 @@
 'use strict';
 
+const path = require('path');
+
 /**
  * Strip filesystem paths and other host-only fields before sending data to clients.
  */
+function folderLabelForClient(folderPath) {
+  if (typeof folderPath !== 'string' || !folderPath.trim()) return '';
+  const trimmed = folderPath.trim();
+  const base = path.basename(trimmed.replace(/[\\/]+$/, ''));
+  return base || trimmed;
+}
+
 function sanitizeSubtitleTrackForClient(track) {
   if (!track || typeof track !== 'object') return null;
   return {
@@ -24,7 +33,7 @@ function sanitizeMovieForClient(movie) {
     id: movie.id,
     title: movie.title,
     filename: movie.filename,
-    folder: movie.folder,
+    folder: folderLabelForClient(movie.folder),
     sizeBytes: movie.sizeBytes,
     mtimeMs: movie.mtimeMs,
     duration: movie.duration,
@@ -44,7 +53,9 @@ function sanitizeMoviesPayload(payload) {
   const movies = Array.isArray(payload && payload.movies)
     ? payload.movies.map(sanitizeMovieForClient).filter(Boolean)
     : [];
-  const folders = Array.isArray(payload && payload.folders) ? payload.folders.slice() : [];
+  const folders = Array.isArray(payload && payload.folders)
+    ? payload.folders.map(folderLabelForClient).filter(Boolean)
+    : [];
   return { movies, folders };
 }
 
@@ -59,6 +70,7 @@ function sanitizeRoomStateForClient(state) {
 }
 
 module.exports = {
+  folderLabelForClient,
   sanitizeSubtitleTrackForClient,
   sanitizeMovieForClient,
   sanitizeMoviesPayload,
