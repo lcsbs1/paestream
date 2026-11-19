@@ -1,13 +1,17 @@
 'use strict';
 
+const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn, execFile } = require('child_process');
 const QRCode = require('qrcode');
 
+const CLOUDFLARED_VERSION = '2026.11.1';
 const CLOUDFLARED_DOWNLOAD_URL =
-  'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe';
+  `https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-windows-amd64.exe`;
+const CLOUDFLARED_SHA256 =
+  '341deda3db5ec498a0482254d6c38c0b7cf01a30c37bb5dd95d2216d08955e35';
 const TRYCLOUDFLARE_RE = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/i;
 
 function getLanIpAddress() {
@@ -74,6 +78,12 @@ function findCloudflaredInPath(rootDir) {
   return null;
 }
 
+function sha256File(filePath) {
+  const hash = crypto.createHash('sha256');
+  hash.update(fs.readFileSync(filePath));
+  return hash.digest('hex');
+}
+
 async function downloadCloudflared(destPath) {
   const binDir = path.dirname(destPath);
   fs.mkdirSync(binDir, { recursive: true });
@@ -92,6 +102,14 @@ async function downloadCloudflared(destPath) {
     }
     const arrayBuf = await res.arrayBuffer();
     fs.writeFileSync(tempPath, Buffer.from(arrayBuf));
+
+    const digest = sha256File(tempPath);
+    if (digest !== CLOUDFLARED_SHA256) {
+      throw new Error(
+        `Checksum cloudflared inválido (esperado ${CLOUDFLARED_SHA256}, obtido ${digest}).`
+      );
+    }
+
     fs.renameSync(tempPath, destPath);
     return destPath;
   } catch (err) {
@@ -122,7 +140,7 @@ async function renderQrCode(url) {
   }
 }
 
-function createTunnelManager({ rootDir, port, hostToken, enabled = true }) {
+function createTunnelManager({ rootDir, port, enabled = true, createHostPairingCode } = {}) {
   const resolvedRoot = path.resolve(rootDir);
   const lanIp = getLanIpAddress();
   const lanUrl = `http://${lanIp}:${port}`;
@@ -140,7 +158,13 @@ function createTunnelManager({ rootDir, port, hostToken, enabled = true }) {
 
   function getHostMobileUrl() {
     const base = publicUrl || lanUrl;
-    return `${base}/?role=host&token=${encodeURIComponent(hostToken)}`;
+    if (typeof createHostPairingCode === 'function') {
+      const pairing = createHostPairingCode();
+      if (pairing && pairing.code) {
+        return `${base}/?role=host&code=${encodeURIComponent(pairing.code)}`;
+      }
+    }
+    return `${base}/?role=host`;
   }
 
   async function refreshQrCodes() {
@@ -235,7 +259,6 @@ function createTunnelManager({ rootDir, port, hostToken, enabled = true }) {
     return {
       ...getPublicInfo(),
       hostMobileUrl: getHostMobileUrl(),
-      hostToken,
       hostQrCodeDataUrl
     };
   }
