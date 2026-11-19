@@ -24,6 +24,7 @@
    * - GET  `${ENDPOINTS.SUBTITLE_BASE}/${subtitleId}.vtt?offset=${sec}` -> text/vtt
    * - GET  ENDPOINTS.TUNNEL -> { publicUrl: string|null, lanUrl: string, guestUrl: string, qrCodeDataUrl: string|null, status: string }
    * - GET  ENDPOINTS.HOST_TUNNEL -> (x-host-token or localhost) { ...publicTunnel, hostMobileUrl: string, hostQrCodeDataUrl: string|null }
+   * - GET  ENDPOINTS.WEBRTC_ICE -> { iceServers: RTCIceServer[], hasTurn: boolean, source: string }
    * - GET  `${ENDPOINTS.HLS_BASE}/${sessionId}/playlist.m3u8` -> application/vnd.apple.mpegurl
    */
   const ENDPOINTS = Object.freeze({
@@ -37,6 +38,7 @@
     HOST_TUNNEL: '/api/host/tunnel',
     SUBTITLE_BASE: '/api/subtitles',
     TUNNEL: '/api/tunnel',
+    WEBRTC_ICE: '/api/webrtc-ice',
     HLS_BASE: '/hls'
   });
 
@@ -49,8 +51,6 @@
    * - HOST_TIME_UPDATE: { currentTime: number, isPlaying: boolean }
    * - SYNC_PULSE:       { hostTime: number, isPlaying: boolean, streamEpoch: number, baseOffset: number, serverTimestamp: number }
    * - HOST_ERROR:       { code: string, message: string }
-   * - CHAT_MESSAGE:     { id: string, sender: string, role: 'host' | 'guest', text: string, timestamp: number }
-   * - CHAT_REACTION:    { emoji: string, sender: string, role: 'host' | 'guest' }
    * - WEBRTC_SIGNAL:    { type: 'offer' | 'answer' | 'candidate' | 'call-state', payload: any, fromRole?: 'host' | 'guest' }
    */
   const SOCKET_EVENTS = Object.freeze({
@@ -60,16 +60,11 @@
     HOST_TIME_UPDATE: 'host:time-update',
     SYNC_PULSE: 'sync:pulse',
     HOST_ERROR: 'host:error',
-    CHAT_MESSAGE: 'chat:message',
-    CHAT_REACTION: 'chat:reaction',
     WEBRTC_SIGNAL: 'webrtc:signal'
   });
 
-  const REACTIONS = Object.freeze(['❤️', '🥰', '😂', '😱', '🔥', '😢']);
-
   return Object.freeze({
     ENDPOINTS,
-    SOCKET_EVENTS,
-    REACTIONS
+    SOCKET_EVENTS
   });
 });

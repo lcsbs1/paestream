@@ -10,7 +10,7 @@
       onToast
     } = options;
 
-    const { SOCKET_EVENTS, REACTIONS } = contract;
+    const { SOCKET_EVENTS, ENDPOINTS } = contract;
 
     let role = 'guest';
     let myName = '';
@@ -34,6 +34,13 @@
     let partnerMicActive = false;
     let partnerHasVideo = false;
     let partnerHasAudio = false;
+    let rtcConfig = null;
+    let rtcConfigPromise = null;
+    let pcPromise = null;
+    let signalQueue = Promise.resolve();
+    let hasTurnRelay = false;
+    let lastConnectionToastAt = 0;
+    let renegotiateTimer = null;
 
     // Audio / Ducking state
     let audioCtx = null;
@@ -42,6 +49,7 @@
     let analyserData = null;
     let voiceGainNode = null;
     let usingWebAudioForVoice = false;
+    let duckCloneTrack = null;
 
     let micActive = false;
     let camActive = false;
@@ -53,18 +61,43 @@
     let lastSpeechAt = 0;
     let duckTimer = null;
 
-    const RTC_CONFIG = {
+    const FALLBACK_RTC_CONFIG = {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' }
-      ]
+      ],
+      iceCandidatePoolSize: 4
     };
 
-    function formatClockTime(ts) {
-      const d = new Date(ts || Date.now());
-      const hh = String(d.getHours()).padStart(2, '0');
-      const mm = String(d.getMinutes()).padStart(2, '0');
-      return `${hh}:${mm}`;
+    async function loadRtcConfig() {
+      if (rtcConfig) return rtcConfig;
+      if (rtcConfigPromise) return rtcConfigPromise;
+
+      rtcConfigPromise = (async () => {
+        try {
+          const endpoint = (ENDPOINTS && ENDPOINTS.WEBRTC_ICE) || '/api/webrtc-ice';
+          const res = await fetch(endpoint, { cache: 'no-store' });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json();
+          if (!data || !Array.isArray(data.iceServers) || data.iceServers.length === 0) {
+            throw new Error('iceServers vazio');
+          }
+          hasTurnRelay = Boolean(data.hasTurn);
+          rtcConfig = {
+            iceServers: data.iceServers,
+            iceCandidatePoolSize: 4
+          };
+          return rtcConfig;
+        } catch (_err) {
+          hasTurnRelay = false;
+          rtcConfig = { ...FALLBACK_RTC_CONFIG };
+          return rtcConfig;
+        } finally {
+          rtcConfigPromise = null;
+        }
+      })();
+
+      return rtcConfigPromise;
     }
 
     function ensureAudioContext() {
@@ -87,12 +120,15 @@
       if (ctx && ctx.state === 'suspended') {
         ctx.resume().catch(() => {});
       }
-      // Prime remote video element inside user gesture for Safari iOS
       if (elements.remoteVideo && elements.remoteVideo.srcObject) {
+        elements.remoteVideo.muted = true;
         elements.remoteVideo.play().catch(() => {});
       }
-      if (remoteStream && remoteStream.getAudioTracks().length > 0 && !usingWebAudioForVoice) {
-        attachRemoteAudioGraph(remoteStream);
+      if (elements.remoteAudio && elements.remoteAudio.srcObject) {
+        elements.remoteAudio.play().catch(() => {});
+      }
+      if (remoteStream) {
+        bindRemoteMedia(remoteStream);
       } else {
         syncRemoteAudioRouting();
       }
@@ -100,68 +136,114 @@
 
     function syncRemoteAudioRouting() {
       const remoteVideo = elements.remoteVideo;
-      if (!remoteVideo) return;
+      const remoteAudio = elements.remoteAudio;
+      // Video tile must stay muted so autoplay of remote camera is allowed.
+      if (remoteVideo) remoteVideo.muted = true;
 
       if (usingWebAudioForVoice && voiceGainNode && audioCtx && audioCtx.state === 'running') {
         voiceGainNode.gain.value = whatsappMode ? 0 : voiceVolume;
-        remoteVideo.muted = true;
-      } else {
-        remoteVideo.muted = whatsappMode;
+        if (remoteAudio) {
+          remoteAudio.muted = true;
+        }
+        return;
+      }
+
+      if (remoteAudio) {
+        remoteAudio.muted = Boolean(whatsappMode);
         try {
-          remoteVideo.volume = Math.max(0, Math.min(1, voiceVolume));
+          remoteAudio.volume = Math.max(0, Math.min(1, voiceVolume));
         } catch (_err) {
           // Safe no-op on iOS
         }
+        remoteAudio.play().catch(() => {});
       }
     }
 
-    function attachRemoteAudioGraph(stream) {
-      if (!stream) return;
-      const audioTracks = stream.getAudioTracks();
-      if (audioTracks.length === 0) {
-        usingWebAudioForVoice = false;
-        return;
+    function teardownDuckAnalyser() {
+      if (remoteSourceNode) {
+        try {
+          remoteSourceNode.disconnect();
+        } catch (_e) {}
+        remoteSourceNode = null;
       }
+      if (analyserNode) {
+        try {
+          analyserNode.disconnect();
+        } catch (_e) {}
+        analyserNode = null;
+      }
+      if (voiceGainNode) {
+        try {
+          voiceGainNode.disconnect();
+        } catch (_e) {}
+        voiceGainNode = null;
+      }
+      if (duckCloneTrack) {
+        try {
+          duckCloneTrack.stop();
+        } catch (_e) {}
+        duckCloneTrack = null;
+      }
+      usingWebAudioForVoice = false;
+      analyserData = null;
+    }
+
+    function setupDuckAnalyser(audioTrack) {
+      teardownDuckAnalyser();
+      if (!audioTrack) return;
 
       const ctx = ensureAudioContext();
-      if (!ctx) {
-        usingWebAudioForVoice = false;
-        syncRemoteAudioRouting();
-        return;
-      }
+      if (!ctx) return;
 
       try {
-        if (remoteSourceNode) {
-          try {
-            remoteSourceNode.disconnect();
-          } catch (_e) {}
-          remoteSourceNode = null;
-        }
-        remoteSourceNode = ctx.createMediaStreamSource(stream);
+        duckCloneTrack = audioTrack.clone();
+        const duckStream = new MediaStream([duckCloneTrack]);
+        remoteSourceNode = ctx.createMediaStreamSource(duckStream);
         analyserNode = ctx.createAnalyser();
         analyserNode.fftSize = 512;
         analyserNode.smoothingTimeConstant = 0.78;
         analyserData = new Uint8Array(analyserNode.fftSize);
-
-        voiceGainNode = ctx.createGain();
-        voiceGainNode.gain.value = whatsappMode ? 0 : voiceVolume;
-
         remoteSourceNode.connect(analyserNode);
-        analyserNode.connect(voiceGainNode);
-        voiceGainNode.connect(ctx.destination);
-
-        usingWebAudioForVoice = true;
-        syncRemoteAudioRouting();
+        // Analyser only — playback goes through <audio id="remoteAudio">.
       } catch (_err) {
-        usingWebAudioForVoice = false;
-        syncRemoteAudioRouting();
+        teardownDuckAnalyser();
+      }
+    }
+
+    function bindRemoteMedia(stream) {
+      if (!stream) return;
+      remoteStream = stream;
+
+      const remoteVideo = elements.remoteVideo;
+      if (remoteVideo) {
+        if (remoteVideo.srcObject !== stream) {
+          remoteVideo.srcObject = stream;
+        }
+        remoteVideo.muted = true;
+        remoteVideo.play().catch(() => {});
+      }
+
+      const audioTracks = stream.getAudioTracks().filter((t) => t.readyState !== 'ended');
+      const remoteAudio = elements.remoteAudio;
+      if (remoteAudio) {
+        if (audioTracks.length > 0) {
+          const audioOnly = new MediaStream(audioTracks);
+          remoteAudio.srcObject = audioOnly;
+          syncRemoteAudioRouting();
+          remoteAudio.play().catch(() => {});
+          setupDuckAnalyser(audioTracks[0]);
+          startDuckingMonitor();
+        } else {
+          remoteAudio.srcObject = null;
+          teardownDuckAnalyser();
+        }
       }
     }
 
     function startDuckingMonitor() {
       if (duckTimer) return;
       duckTimer = setInterval(() => {
-        if (!autoDuckEnabled || whatsappMode || !analyserNode || !analyserData || !usingWebAudioForVoice) {
+        if (!autoDuckEnabled || whatsappMode || !analyserNode || !analyserData) {
           if (currentDuckFactor !== 1.0) {
             currentDuckFactor = 1.0;
             player.setDuckFactor(1.0);
@@ -253,13 +335,10 @@
         }
       }
 
-      const remoteLiveVideo =
-        remoteStream &&
-        remoteStream.getVideoTracks().some((t) => t.readyState === 'live' && !t.muted) &&
-        partnerHasVideo;
-
       if (remotePlaceholder) {
-        remotePlaceholder.hidden = Boolean(remoteLiveVideo);
+        const hasLiveTrack =
+          remoteStream && remoteStream.getVideoTracks().some((t) => t.readyState === 'live');
+        remotePlaceholder.hidden = Boolean(hasLiveTrack);
       }
 
       if (localVideo) {
@@ -279,11 +358,19 @@
           callStatusBadge.textContent = 'Modo WhatsApp/FaceTime ativo (WebRTC mudo)';
         } else if (!partnerConnected) {
           callStatusBadge.textContent = 'Aguardando outra pessoa entrar...';
-        } else if (pc && pc.connectionState === 'connected') {
-          callStatusBadge.textContent = 'Conectado P2P • voz e vídeo prontos';
+        } else if (pc && (pc.connectionState === 'connected' || pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed')) {
+          callStatusBadge.textContent = 'Conectado • voz e vídeo prontos';
           callStatusBadge.classList.add('is-live');
+        } else if (pc && (pc.connectionState === 'connecting' || pc.iceConnectionState === 'checking')) {
+          callStatusBadge.textContent = 'Conectando voz/câmera...';
+        } else if (pc && (pc.connectionState === 'failed' || pc.iceConnectionState === 'failed')) {
+          callStatusBadge.textContent = hasTurnRelay
+            ? 'Falha na conexão P2P — tente mic/câmera de novo'
+            : 'Falha P2P — configure TURN (regiões distintas)';
         } else {
-          callStatusBadge.textContent = 'Voz WebRTC pronta';
+          callStatusBadge.textContent = hasTurnRelay
+            ? 'Voz pronta (TURN ativo)'
+            : 'Voz pronta (só STUN — TURN recomendado)';
         }
       }
     }
@@ -301,45 +388,41 @@
       });
     }
 
-    function ensurePeerConnection() {
-      if (pc) return pc;
-      if (typeof global.RTCPeerConnection === 'undefined') {
-        onToast?.('WebRTC não disponível neste navegador.', true);
-        return null;
-      }
+    function describeLocalSdp(desc) {
+      if (!desc) return null;
+      return { type: desc.type, sdp: desc.sdp };
+    }
 
-      pc = new global.RTCPeerConnection(RTC_CONFIG);
+    function scheduleRenegotiation() {
+      if (renegotiateTimer) clearTimeout(renegotiateTimer);
+      renegotiateTimer = setTimeout(() => {
+        renegotiateTimer = null;
+        triggerRenegotiationIfNeeded().catch(() => {});
+      }, 50);
+    }
 
-      audioTransceiver = pc.addTransceiver('audio', { direction: 'recvonly' });
-      videoTransceiver = pc.addTransceiver('video', { direction: 'recvonly' });
+    function wirePeerConnection(peer) {
+      audioTransceiver = peer.addTransceiver('audio', { direction: 'recvonly' });
+      videoTransceiver = peer.addTransceiver('video', { direction: 'recvonly' });
 
       remoteStream = new MediaStream();
-      if (elements.remoteVideo) {
-        elements.remoteVideo.srcObject = remoteStream;
-      }
+      bindRemoteMedia(remoteStream);
 
-      pc.onicecandidate = (event) => {
+      peer.onicecandidate = (event) => {
         if (event.candidate) {
-          sendWebRtcSignal('candidate', event.candidate);
+          sendWebRtcSignal(
+            'candidate',
+            event.candidate.toJSON ? event.candidate.toJSON() : event.candidate
+          );
         }
       };
 
-      pc.onnegotiationneeded = async () => {
-        if (!joined || !partnerConnected || !pc) return;
-        try {
-          makingOffer = true;
-          await pc.setLocalDescription();
-          if (pc.localDescription) {
-            sendWebRtcSignal('offer', pc.localDescription);
-          }
-        } catch (_err) {
-          // Handled by collision/retry on next state change
-        } finally {
-          makingOffer = false;
-        }
+      peer.onnegotiationneeded = () => {
+        if (!joined || !partnerConnected || !pc || pc !== peer) return;
+        scheduleRenegotiation();
       };
 
-      pc.ontrack = (event) => {
+      peer.ontrack = (event) => {
         if (!remoteStream) {
           remoteStream = new MediaStream();
         }
@@ -349,53 +432,117 @@
           remoteStream.addTrack(track);
         }
 
-        if (elements.remoteVideo) {
-          elements.remoteVideo.srcObject = remoteStream;
-          elements.remoteVideo.play().catch(() => {});
-        }
-
         if (track.kind === 'audio') {
-          partnerHasAudio = !track.muted;
+          partnerHasAudio = true;
           track.onunmute = () => {
             partnerHasAudio = true;
             updateCallUi();
           };
           track.onmute = () => {
-            partnerHasAudio = false;
             updateCallUi();
           };
-          attachRemoteAudioGraph(remoteStream);
-          startDuckingMonitor();
         } else if (track.kind === 'video') {
-          partnerHasVideo = !track.muted;
+          partnerHasVideo = true;
           track.onunmute = () => {
             partnerHasVideo = true;
             updateCallUi();
           };
           track.onmute = () => {
-            partnerHasVideo = false;
             updateCallUi();
           };
         }
 
         track.onended = () => {
+          if (remoteStream) {
+            try {
+              remoteStream.removeTrack(track);
+            } catch (_e) {}
+          }
           if (track.kind === 'video') partnerHasVideo = false;
           if (track.kind === 'audio') partnerHasAudio = false;
+          bindRemoteMedia(remoteStream);
           updateCallUi();
         };
 
+        bindRemoteMedia(remoteStream);
         updateCallUi();
       };
 
-      pc.onconnectionstatechange = () => {
-        if (!pc) return;
-        if (pc.connectionState === 'failed') {
-          pc.restartIce?.();
+      peer.onconnectionstatechange = () => {
+        if (!pc || pc !== peer) return;
+        if (peer.connectionState === 'failed') {
+          try {
+            peer.restartIce?.();
+          } catch (_err) {
+            // ignore
+          }
+          const now = Date.now();
+          if (now - lastConnectionToastAt > 8000) {
+            lastConnectionToastAt = now;
+            onToast?.(
+              hasTurnRelay
+                ? 'Conexão de voz/câmera falhou. Tente desligar e ligar mic/câmera.'
+                : 'Conexão de voz/câmera falhou entre regiões. Configure um servidor TURN (veja README).',
+              true
+            );
+          }
         }
         updateCallUi();
       };
 
-      return pc;
+      peer.oniceconnectionstatechange = () => {
+        updateCallUi();
+      };
+    }
+
+    function closePeerConnection() {
+      if (pc) {
+        try {
+          pc.onicecandidate = null;
+          pc.onnegotiationneeded = null;
+          pc.ontrack = null;
+          pc.onconnectionstatechange = null;
+          pc.oniceconnectionstatechange = null;
+          pc.close();
+        } catch (_err) {
+          // ignore
+        }
+      }
+      pc = null;
+      audioTransceiver = null;
+      videoTransceiver = null;
+      iceCandidateQueue = [];
+      makingOffer = false;
+      ignoreOffer = false;
+      isSettingRemoteAnswerPending = false;
+      partnerHasAudio = false;
+      // Keep partnerHasVideo from call-state until tracks return
+    }
+
+    async function ensurePeerConnection() {
+      if (pc) return pc;
+      if (pcPromise) return pcPromise;
+      if (typeof global.RTCPeerConnection === 'undefined') {
+        onToast?.('WebRTC não disponível neste navegador.', true);
+        return null;
+      }
+
+      pcPromise = (async () => {
+        const config = await loadRtcConfig();
+        if (pc) return pc;
+        pc = new global.RTCPeerConnection(config);
+        wirePeerConnection(pc);
+        return pc;
+      })()
+        .catch((err) => {
+          console.warn('[PaeStream] Falha ao criar RTCPeerConnection:', err);
+          return null;
+        })
+        .finally(() => {
+          pcPromise = null;
+        });
+
+      return pcPromise;
     }
 
     async function flushIceCandidates() {
@@ -403,7 +550,7 @@
       while (iceCandidateQueue.length > 0) {
         const candidate = iceCandidateQueue.shift();
         try {
-          await pc.addIceCandidate(candidate);
+          await pc.addIceCandidate(new global.RTCIceCandidate(candidate));
         } catch (_err) {
           if (!ignoreOffer) {
             // Ignore stale candidates
@@ -418,8 +565,9 @@
       try {
         makingOffer = true;
         await pc.setLocalDescription();
-        if (pc.localDescription) {
-          sendWebRtcSignal('offer', pc.localDescription);
+        const desc = describeLocalSdp(pc.localDescription);
+        if (desc) {
+          sendWebRtcSignal('offer', desc);
         }
       } catch (_err) {
         // Ignore transient signaling error
@@ -428,7 +576,7 @@
       }
     }
 
-    async function handleWebRtcSignal(data) {
+    async function processWebRtcSignal(data) {
       if (!data) return;
       const { type, payload } = data;
 
@@ -442,15 +590,17 @@
         if (payload && typeof payload.camActive === 'boolean') {
           partnerHasVideo = payload.camActive;
         }
-        if (payload && payload.ready && role === 'host' && partnerConnected) {
-          ensurePeerConnection();
-          triggerRenegotiationIfNeeded();
+        if (payload && payload.ready && partnerConnected) {
+          await ensurePeerConnection();
+          if (role === 'host') {
+            await triggerRenegotiationIfNeeded();
+          }
         }
         updateCallUi();
         return;
       }
 
-      const peer = ensurePeerConnection();
+      const peer = await ensurePeerConnection();
       if (!peer) return;
 
       const polite = role === 'guest';
@@ -467,14 +617,18 @@
           if (ignoreOffer) return;
 
           isSettingRemoteAnswerPending = description.type === 'answer';
-          await peer.setRemoteDescription(description);
-          isSettingRemoteAnswerPending = false;
+          try {
+            await peer.setRemoteDescription(description);
+          } finally {
+            isSettingRemoteAnswerPending = false;
+          }
           await flushIceCandidates();
 
           if (description.type === 'offer') {
             await peer.setLocalDescription();
-            if (peer.localDescription) {
-              sendWebRtcSignal('answer', peer.localDescription);
+            const answer = describeLocalSdp(peer.localDescription);
+            if (answer) {
+              sendWebRtcSignal('answer', answer);
             }
           }
         } else if (type === 'candidate') {
@@ -483,15 +637,24 @@
             iceCandidateQueue.push(payload);
           } else {
             try {
-              await peer.addIceCandidate(new global.RTCSessionDescription(payload));
+              await peer.addIceCandidate(new global.RTCIceCandidate(payload));
             } catch (err) {
               if (!ignoreOffer) throw err;
             }
           }
         }
-      } catch (_err) {
-        // Resilient against transient SDP collision
+      } catch (err) {
+        console.warn('[PaeStream] WebRTC signal handling error:', err);
       }
+    }
+
+    function handleWebRtcSignal(data) {
+      signalQueue = signalQueue
+        .then(() => processWebRtcSignal(data))
+        .catch((err) => {
+          console.warn('[PaeStream] WebRTC queue error:', err);
+        });
+      return signalQueue;
     }
 
     async function toggleMic() {
@@ -501,7 +664,11 @@
       }
 
       ensureAudioContext();
-      const peer = ensurePeerConnection();
+      if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+        onToast?.('Microfone indisponível neste navegador (precisa de HTTPS ou localhost).', true);
+        return;
+      }
+      const peer = await ensurePeerConnection();
 
       if (!micActive) {
         if (localAudioTrack && localAudioTrack.readyState === 'live') {
@@ -521,7 +688,7 @@
               audioTransceiver.direction = 'sendrecv';
               await audioTransceiver.sender.replaceTrack(localAudioTrack);
               micActive = true;
-              triggerRenegotiationIfNeeded();
+              scheduleRenegotiation();
             }
           } catch (_err) {
             onToast?.('Não foi possível acessar o microfone. Verifique a permissão.', true);
@@ -541,7 +708,11 @@
 
     async function toggleCamera() {
       ensureAudioContext();
-      const peer = ensurePeerConnection();
+      if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+        onToast?.('Câmera indisponível neste navegador (precisa de HTTPS ou localhost).', true);
+        return;
+      }
+      const peer = await ensurePeerConnection();
 
       if (!camActive) {
         try {
@@ -554,18 +725,23 @@
             }
           });
           localVideoTrack = stream.getVideoTracks()[0] || null;
-          if (localVideoTrack) {
+          if (!localVideoTrack || !peer || !videoTransceiver) {
+            if (localVideoTrack) {
+              localVideoTrack.stop();
+              localVideoTrack = null;
+            }
+            onToast?.('Não foi possível publicar a câmera na chamada.', true);
+            camActive = false;
+          } else {
             localPreviewStream = new MediaStream([localVideoTrack]);
             if (elements.localVideo) {
               elements.localVideo.srcObject = localPreviewStream;
               elements.localVideo.play().catch(() => {});
             }
-            if (peer && videoTransceiver) {
-              videoTransceiver.direction = 'sendrecv';
-              await videoTransceiver.sender.replaceTrack(localVideoTrack);
-              triggerRenegotiationIfNeeded();
-            }
+            videoTransceiver.direction = 'sendrecv';
+            await videoTransceiver.sender.replaceTrack(localVideoTrack);
             camActive = true;
+            scheduleRenegotiation();
           }
         } catch (_err) {
           onToast?.('Não foi possível ativar a câmera. Verifique a permissão.', true);
@@ -582,7 +758,7 @@
         if (videoTransceiver) {
           videoTransceiver.direction = 'recvonly';
           await videoTransceiver.sender.replaceTrack(null).catch(() => {});
-          triggerRenegotiationIfNeeded();
+          scheduleRenegotiation();
         }
         camActive = false;
       }
@@ -602,6 +778,7 @@
         if (audioTransceiver) {
           audioTransceiver.direction = 'recvonly';
           await audioTransceiver.sender.replaceTrack(null).catch(() => {});
+          scheduleRenegotiation();
         }
         micActive = false;
         currentDuckFactor = 1.0;
@@ -631,103 +808,20 @@
       }
     }
 
-    function appendChatMessage(msg) {
-      const list = elements.chatMessages;
-      if (!list || !msg) return;
-
-      const emptyHint = list.querySelector('.chat-empty-hint');
-      if (emptyHint) emptyHint.remove();
-
-      const isMine = msg.role === role && msg.sender === myName;
-
-      const item = document.createElement('div');
-      item.className = `chat-msg${isMine ? ' is-mine' : ''}`;
-
-      const meta = document.createElement('div');
-      meta.className = 'chat-msg-meta';
-
-      const senderEl = document.createElement('span');
-      senderEl.className = 'chat-msg-sender';
-      senderEl.textContent = msg.sender || (msg.role === 'host' ? 'Host' : 'Convidada');
-
-      const roleEl = document.createElement('span');
-      roleEl.className = 'chat-msg-role';
-      roleEl.textContent = msg.role === 'host' ? 'Host' : 'Amor';
-
-      const timeEl = document.createElement('span');
-      timeEl.className = 'chat-msg-time';
-      timeEl.textContent = formatClockTime(msg.timestamp);
-
-      meta.appendChild(senderEl);
-      meta.appendChild(roleEl);
-      meta.appendChild(timeEl);
-
-      const textEl = document.createElement('div');
-      textEl.className = 'chat-msg-text';
-      textEl.textContent = String(msg.text || '');
-
-      item.appendChild(meta);
-      item.appendChild(textEl);
-      list.appendChild(item);
-
-      list.scrollTop = list.scrollHeight;
-    }
-
-    function spawnFloatingReaction(reaction) {
-      const layer = elements.reactionLayer;
-      if (!layer || !reaction || !reaction.emoji) return;
-
-      const node = document.createElement('div');
-      node.className = 'floating-reaction';
-      const leftPct = 12 + Math.random() * 72;
-      const driftPx = Math.round((Math.random() - 0.5) * 56);
-      node.style.left = `${leftPct.toFixed(1)}%`;
-      node.style.setProperty('--drift-x', `${driftPx}px`);
-
-      const emojiSpan = document.createElement('span');
-      emojiSpan.textContent = String(reaction.emoji);
-      node.appendChild(emojiSpan);
-
-      if (reaction.sender) {
-        const senderTag = document.createElement('span');
-        senderTag.className = 'floating-reaction-sender';
-        senderTag.textContent = String(reaction.sender);
-        node.appendChild(senderTag);
-      }
-
-      layer.appendChild(node);
-
-      const cleanup = () => {
-        if (node.parentNode) node.remove();
-      };
-      node.addEventListener('animationend', cleanup, { once: true });
-      setTimeout(cleanup, 2700);
-    }
-
-    function renderReactionButtons() {
-      const bar = elements.reactionBar;
-      if (!bar) return;
-      bar.innerHTML = '';
-      (REACTIONS || []).forEach((emoji) => {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'reaction-btn';
-        btn.textContent = emoji;
-        btn.setAttribute('aria-label', `Enviar reação ${emoji}`);
-        btn.addEventListener('click', () => {
-          emitSocket(SOCKET_EVENTS.CHAT_REACTION, { emoji });
-        });
-        bar.appendChild(btn);
-      });
-    }
-
     function setSessionIdentity(nextRole, displayName) {
       role = nextRole === 'host' ? 'host' : 'guest';
       myName = displayName || (role === 'host' ? 'Lucas' : 'Amor');
       joined = true;
-      ensurePeerConnection();
-      updateCallUi();
-      broadcastCallState();
+      loadRtcConfig()
+        .then(() => ensurePeerConnection())
+        .then(() => {
+          updateCallUi();
+          broadcastCallState();
+        })
+        .catch(() => {
+          updateCallUi();
+          broadcastCallState();
+        });
     }
 
     function updateRoomPresence(state) {
@@ -742,19 +836,26 @@
         }
       }
 
+      if (!partnerConnected && wasPartnerConnected) {
+        partnerMicActive = false;
+        partnerHasVideo = false;
+        partnerHasAudio = false;
+        partnerExternalMode = false;
+      }
+
       if (partnerConnected && !wasPartnerConnected && joined) {
-        ensurePeerConnection();
-        broadcastCallState();
-        if (role === 'host') {
-          triggerRenegotiationIfNeeded();
-        }
+        ensurePeerConnection()
+          .then(() => {
+            broadcastCallState();
+            scheduleRenegotiation();
+          })
+          .catch(() => {});
       }
 
       updateCallUi();
     }
 
     // Wire UI events
-    renderReactionButtons();
     startDuckingMonitor();
 
     elements.toggleMicBtn?.addEventListener('click', () => {
@@ -790,23 +891,11 @@
       }
     });
 
-    elements.chatForm?.addEventListener('submit', (e) => {
-      e.preventDefault();
-      const input = elements.chatInput;
-      if (!input) return;
-      const text = input.value.trim();
-      if (!text) return;
-      emitSocket(SOCKET_EVENTS.CHAT_MESSAGE, { text });
-      input.value = '';
-    });
-
     return {
       unlockAudio,
       setSessionIdentity,
       updateRoomPresence,
       handleWebRtcSignal,
-      appendChatMessage,
-      spawnFloatingReaction,
       setMovieVolumePercent,
       setVoiceVolumePercent
     };

@@ -29,6 +29,7 @@
       bufferingBadgeEl,
       bufferingTextEl,
       autoplayBannerEl,
+      actionFeedbackEl,
       syncBadgeEl,
       onTimeDisplay,
       onStatusToast,
@@ -50,6 +51,7 @@
     let movieVolume = 1.0;
     let duckFactor = 1.0;
     let hudTimer = null;
+    let feedbackTimer = null;
 
     const useNativeHls = Boolean(video.canPlayType && video.canPlayType('application/vnd.apple.mpegurl'));
 
@@ -373,12 +375,14 @@
         if (emptyStateEl) emptyStateEl.hidden = false;
         setBuffering(false);
         showAutoplayBanner(false);
+        syncStageStateClasses();
         updateGuestSyncBadge(0);
         notifyTimeDisplay();
         return;
       }
 
       if (emptyStateEl) emptyStateEl.hidden = true;
+      syncStageStateClasses();
 
       const streamChanged =
         state.streamEpoch !== currentEpoch ||
@@ -547,13 +551,77 @@
       }
     }
 
+    function syncStageStateClasses() {
+      if (!stageEl) return;
+      const isEmpty = !currentStreamUrl;
+      const isPaused = Boolean(currentStreamUrl) && (video.paused || video.ended);
+      stageEl.classList.toggle('is-empty', isEmpty);
+      stageEl.classList.toggle('is-paused', isPaused);
+      if (isEmpty || isPaused) {
+        clearTimeout(hudTimer);
+        stageEl.classList.add('hud-visible');
+      }
+    }
+
+    function isHudControlFocused() {
+      if (!stageEl) return false;
+      const active = document.activeElement;
+      if (!active || active === stageEl || !stageEl.contains(active)) return false;
+      return Boolean(active.closest('button, input, select, a'));
+    }
+
+    function hideHudNow() {
+      if (!stageEl) return;
+      clearTimeout(hudTimer);
+      if (!currentStreamUrl || video.paused || video.ended || isHostScrubbing) return;
+      stageEl.classList.remove('hud-visible');
+    }
+
     function revealHudTemporarily() {
       if (!stageEl) return;
       stageEl.classList.add('hud-visible');
       clearTimeout(hudTimer);
+      if (!currentStreamUrl || video.paused || video.ended) return;
       hudTimer = setTimeout(() => {
+        if (isHostScrubbing || isHudControlFocused()) {
+          revealHudTemporarily();
+          return;
+        }
         stageEl.classList.remove('hud-visible');
-      }, 2800);
+      }, 2400);
+    }
+
+    function showActionFeedback(type) {
+      const el = actionFeedbackEl || stageEl?.querySelector('#stageActionFeedback');
+      if (!el) return;
+
+      let svg = '';
+      let label = '';
+      if (type === 'play') {
+        svg = '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor" aria-hidden="true"><polygon points="7,4 20,12 7,20"></polygon></svg>';
+      } else if (type === 'pause') {
+        svg = '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1"></rect><rect x="14" y="4" width="4" height="16" rx="1"></rect></svg>';
+      } else if (type === 'rewind') {
+        svg = '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path><polyline points="3 3 3 8 8 8"></polyline></svg>';
+        label = '-10s';
+      } else if (type === 'forward') {
+        svg = '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"></path><polyline points="21 3 21 8 16 8"></polyline></svg>';
+        label = '+10s';
+      } else {
+        return;
+      }
+
+      clearTimeout(feedbackTimer);
+      el.innerHTML = `${svg}${label ? `<span class="feedback-label">${label}</span>` : ''}`;
+      el.hidden = false;
+      el.classList.remove('is-animating');
+      void el.offsetWidth;
+      el.classList.add('is-animating');
+
+      feedbackTimer = setTimeout(() => {
+        el.classList.remove('is-animating');
+        el.hidden = true;
+      }, 620);
     }
 
     // Wire native video events
@@ -561,14 +629,20 @@
     video.addEventListener('durationchange', notifyTimeDisplay);
     video.addEventListener('play', () => {
       showAutoplayBanner(false);
+      syncStageStateClasses();
+      revealHudTemporarily();
       notifyTimeDisplay();
     });
-    video.addEventListener('pause', notifyTimeDisplay);
+    video.addEventListener('pause', () => {
+      syncStageStateClasses();
+      notifyTimeDisplay();
+    });
     video.addEventListener('waiting', () => {
       if (currentStreamUrl) setBuffering(true, 'Buffering...');
     });
     video.addEventListener('playing', () => {
       setBuffering(false);
+      syncStageStateClasses();
       reapplySubtitleMode();
     });
     video.addEventListener('canplay', () => {
@@ -576,6 +650,7 @@
       reapplySubtitleMode();
     });
     video.addEventListener('ended', () => {
+      syncStageStateClasses();
       notifyTimeDisplay();
       onEnded?.();
     });
@@ -589,8 +664,39 @@
     document.addEventListener('fullscreenchange', reapplySubtitleMode);
 
     if (stageEl) {
-      stageEl.addEventListener('pointerdown', revealHudTemporarily);
+      stageEl.addEventListener('pointerdown', (e) => {
+        const hitControl = e.target.closest(
+          '.hud-top-bar, .hud-bottom-bar, button, input, select, a, .call-pip-overlay, .autoplay-unlock-banner, .video-empty-state'
+        );
+        if (hitControl) {
+          revealHudTemporarily();
+          return;
+        }
+        if (e.pointerType === 'touch') {
+          if (stageEl.classList.contains('hud-visible') && currentStreamUrl && !video.paused && !video.ended) {
+            hideHudNow();
+          } else {
+            revealHudTemporarily();
+          }
+        } else {
+          revealHudTemporarily();
+        }
+      });
       stageEl.addEventListener('mousemove', revealHudTemporarily);
+      stageEl.addEventListener('focusin', revealHudTemporarily);
+      stageEl.addEventListener('input', revealHudTemporarily);
+      stageEl.addEventListener('change', revealHudTemporarily);
+      stageEl.addEventListener('mouseleave', () => {
+        if (currentStreamUrl && !video.paused && !video.ended && !isHostScrubbing && !isHudControlFocused()) {
+          clearTimeout(hudTimer);
+          hudTimer = setTimeout(() => {
+            if (!isHostScrubbing && !isHudControlFocused()) {
+              stageEl.classList.remove('hud-visible');
+            }
+          }, 800);
+        }
+      });
+      syncStageStateClasses();
     }
 
     if (autoplayBannerEl) {
@@ -622,6 +728,8 @@
       toggleFullscreen,
       togglePip,
       isPipSupported,
+      showActionFeedback,
+      revealHudTemporarily,
       formatTimecode
     };
   }

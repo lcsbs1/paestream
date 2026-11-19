@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="theme-color" content="#09090f">
+  <meta name="theme-color" content="#08080c">
   <title>PaeStream — Cinema Particular</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -27,7 +27,7 @@
         <span class="brand-name">PaeStream</span>
       </div>
 
-      <h1 id="entryTitle" class="entry-title">Entrar na Sessão 🍿</h1>
+      <h1 id="entryTitle" class="entry-title">Entrar na Sessão</h1>
       <p class="entry-subtitle">Cinema particular sincronizado para vocês dois.</p>
 
       <div class="entry-meta">
@@ -54,52 +54,11 @@
 
   <!-- App Shell -->
   <div id="appShell" class="app-shell">
-    <!-- Top Header -->
-    <header class="topbar">
-      <div class="topbar-left">
-        <div class="brand-inline">
-          <span class="brand-mark-sm" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="2.5" y="4.5" width="19" height="15" rx="3.5"></rect>
-              <polygon points="10,9 16,12 10,15" fill="currentColor" stroke="none"></polygon>
-            </svg>
-          </span>
-          <span class="brand-wordmark">PaeStream</span>
-        </div>
-        <span class="topbar-divider" aria-hidden="true"></span>
-        <h2 id="roomTitle" class="room-title">Nenhum filme selecionado</h2>
-      </div>
-
-      <div class="topbar-actions">
-        <div id="connectionPill" class="presence-pill" title="Presença na sala">
-          <span class="presence-dot" aria-hidden="true"></span>
-          <span id="connectionLabel">Conectando...</span>
-        </div>
-
-        <button id="openLibraryBtn" type="button" class="btn-surface host-only" hidden>
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <rect x="3" y="4" width="18" height="16" rx="2"></rect>
-            <line x1="7" y1="4" x2="7" y2="20"></line>
-            <line x1="17" y1="4" x2="17" y2="20"></line>
-            <line x1="3" y1="9" x2="7" y2="9"></line>
-            <line x1="3" y1="15" x2="7" y2="15"></line>
-            <line x1="17" y1="9" x2="21" y2="9"></line>
-            <line x1="17" y1="15" x2="21" y2="15"></line>
-          </svg>
-          <span>Filmes</span>
-        </button>
-
-        <button id="openInviteBtn" type="button" class="btn-amber host-only" hidden>
-          <span>Convidar Amor 📱</span>
-        </button>
-      </div>
-    </header>
-
     <!-- Main Theater Grid -->
-    <main class="theater-main">
-      <!-- Left / Top: Cinema Stage + Console -->
+    <main id="theaterMain" class="theater-main">
+      <!-- Left / Top: Cinema Stage with Floating Netflix HUD -->
       <section class="stage-column" aria-label="Sala de Projeção">
-        <div id="playerStage" class="player-stage" tabindex="0">
+        <div id="playerStage" class="player-stage is-empty" tabindex="0">
           <video
             id="cinemaVideo"
             playsinline
@@ -133,13 +92,15 @@
             <span>Toque para liberar som e sincronizar vídeo</span>
           </button>
 
-          <!-- Floating Reaction Overlay -->
-          <div id="reactionLayer" class="reaction-layer" aria-hidden="true"></div>
+          <!-- Central Action Feedback Pulse (Play, Pause, -10s, +10s) -->
+          <div id="stageActionFeedback" class="stage-action-feedback" aria-hidden="true" hidden></div>
 
           <!-- Floating WebRTC Video Call PiP -->
           <div id="callPipOverlay" class="call-pip-overlay" hidden>
+            <!-- Hidden audio element: remote voice must not share the muted video element -->
+            <audio id="remoteAudio" autoplay playsinline webkit-playsinline></audio>
             <div class="call-pip-remote-wrap">
-              <video id="remoteVideo" autoplay playsinline webkit-playsinline></video>
+              <video id="remoteVideo" autoplay muted playsinline webkit-playsinline></video>
               <div id="remotePlaceholder" class="remote-placeholder">
                 <span id="remoteInitial" class="remote-initial">A</span>
                 <span id="remoteExternalBadge" class="remote-external-badge" hidden>Ligação externa</span>
@@ -157,237 +118,237 @@
             </button>
           </div>
 
-          <!-- Stage Quick HUD (PiP + Fullscreen + Title) -->
+          <!-- Floating Auto-Retractable Netflix HUD -->
           <div id="stageOverlayHud" class="stage-overlay-hud">
-            <div class="hud-top">
-              <span id="hudMovieTitle" class="hud-movie-title"></span>
-              <span id="hudPartnerVoiceBadge" class="hud-voice-badge" hidden></span>
-            </div>
-            <div class="hud-bottom-actions">
-              <button id="pipBtn" type="button" class="hud-icon-btn" title="Picture-in-Picture" aria-label="Picture-in-Picture">
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="3" y="4" width="18" height="14" rx="2"></rect>
-                  <rect x="12" y="10" width="7" height="5" rx="1" fill="currentColor"></rect>
-                </svg>
-              </button>
-              <button id="fullscreenBtn" type="button" class="hud-icon-btn" title="Tela Cheia" aria-label="Tela Cheia">
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="15 3 21 3 21 9"></polyline>
-                  <polyline points="9 21 3 21 3 15"></polyline>
-                  <polyline points="21 15 21 21 15 21"></polyline>
-                  <polyline points="3 9 3 3 9 3"></polyline>
-                </svg>
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Theater Control Console -->
-        <div class="theater-console">
-          <!-- HOST ONLY CONTROLS -->
-          <div id="hostControls" class="host-controls host-only" hidden>
-            <div class="timeline-row">
-              <span id="hostCurrentTime" class="timecode">00:00</span>
-              <input
-                id="hostSeekSlider"
-                type="range"
-                class="seek-slider"
-                min="0"
-                max="100"
-                step="0.1"
-                value="0"
-                aria-label="Linha do tempo do filme"
-                disabled
-              >
-              <span id="hostDurationTime" class="timecode">00:00</span>
-            </div>
-
-            <div class="host-buttons-row">
-              <div class="transport-group">
-                <button id="rewind10Btn" type="button" class="btn-icon-text" title="Voltar 10 segundos" disabled>
-                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path>
-                    <polyline points="3 3 3 8 8 8"></polyline>
-                  </svg>
-                  <span>-10s</span>
-                </button>
-
-                <button id="hostPlayPauseBtn" type="button" class="btn-play-main" title="Reproduzir / Pausar" aria-label="Reproduzir ou Pausar" disabled>
-                  <svg id="hostPlayIcon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
-                    <polygon points="7,4 20,12 7,20"></polygon>
-                  </svg>
-                  <svg id="hostPauseIcon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true" hidden>
-                    <rect x="6" y="4" width="4" height="16" rx="1"></rect>
-                    <rect x="14" y="4" width="4" height="16" rx="1"></rect>
-                  </svg>
-                </button>
-
-                <button id="forward10Btn" type="button" class="btn-icon-text" title="Avançar 10 segundos" disabled>
-                  <span>+10s</span>
-                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M21 12a9 9 0 1 1-3-6.7L21 8"></path>
-                    <polyline points="21 3 21 8 16 8"></polyline>
-                  </svg>
-                </button>
+            <!-- Top Floating Bar -->
+            <header class="hud-top-bar">
+              <div class="hud-top-left">
+                <div class="brand-inline">
+                  <span class="brand-mark-sm" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <rect x="2.5" y="4.5" width="19" height="15" rx="3.5"></rect>
+                      <polygon points="10,9 16,12 10,15" fill="currentColor" stroke="none"></polygon>
+                    </svg>
+                  </span>
+                  <span class="brand-wordmark">PaeStream</span>
+                </div>
+                <span class="topbar-divider" aria-hidden="true"></span>
+                <h2 id="roomTitle" class="room-title">Nenhum filme selecionado</h2>
+                <span id="hudMovieTitle" class="sr-only"></span>
               </div>
 
-              <div class="tracks-group">
-                <div class="track-select-wrap">
-                  <label for="audioTrackSelect" class="sr-only">Faixa de Áudio</label>
-                  <select id="audioTrackSelect" class="track-select" aria-label="Faixa de Áudio" disabled>
-                    <option value="">Áudio padrão</option>
-                  </select>
+              <div class="hud-top-actions">
+                <div id="connectionPill" class="presence-pill" title="Presença na sala">
+                  <span class="presence-dot" aria-hidden="true"></span>
+                  <span id="connectionLabel">Conectando...</span>
                 </div>
 
-                <div class="track-select-wrap">
-                  <label for="subtitleTrackSelect" class="sr-only">Legenda</label>
-                  <select id="subtitleTrackSelect" class="track-select" aria-label="Legenda" disabled>
-                    <option value="">Sem legenda</option>
-                  </select>
-                </div>
+                <span id="hudPartnerVoiceBadge" class="hud-voice-badge" hidden></span>
 
-                <button id="uploadSubtitleBtn" type="button" class="btn-surface btn-sm" title="Enviar arquivo .srt ou .vtt" disabled>
+                <button id="openLibraryBtn" type="button" class="btn-hud host-only" hidden>
                   <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                    <polyline points="17 8 12 3 7 8"></polyline>
-                    <line x1="12" y1="3" x2="12" y2="15"></line>
+                    <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+                    <line x1="7" y1="4" x2="7" y2="20"></line>
+                    <line x1="17" y1="4" x2="17" y2="20"></line>
+                    <line x1="3" y1="9" x2="7" y2="9"></line>
+                    <line x1="3" y1="15" x2="7" y2="15"></line>
+                    <line x1="17" y1="9" x2="21" y2="9"></line>
+                    <line x1="17" y1="15" x2="21" y2="15"></line>
                   </svg>
-                  <span>.SRT/.VTT</span>
+                  <span>Filmes</span>
                 </button>
-                <input id="subtitleFileInput" type="file" accept=".srt,.vtt,text/vtt,application/x-subrip" hidden>
-              </div>
-            </div>
-          </div>
 
-          <!-- GUEST ONLY CONTROLS (strictly read-only timeline + sync status + resync) -->
-          <div id="guestControls" class="guest-controls guest-only">
-            <div class="timeline-row">
-              <span id="guestCurrentTime" class="timecode">00:00</span>
-              <div id="guestProgressTrack" class="readonly-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Progresso da sessão">
-                <div id="guestProgressFill" class="readonly-progress-fill"></div>
+                <button id="openInviteBtn" type="button" class="btn-amber host-only" hidden>
+                  <span>Convidar</span>
+                </button>
               </div>
-              <span id="guestDurationTime" class="timecode">00:00</span>
-            </div>
+            </header>
 
-            <div class="guest-status-row">
-              <span id="guestSyncBadge" class="sync-badge is-synced">Sincronizado com o Host 🟢</span>
-              <div class="guest-action-buttons">
-                <button id="resyncBtn" type="button" class="btn-surface btn-sm">
-                  Ressincronizar 🔄
-                </button>
-                <button id="guestPipBtn" type="button" class="btn-surface btn-icon-only" title="Picture-in-Picture" aria-label="Picture-in-Picture">
-                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                    <rect x="3" y="4" width="18" height="14" rx="2"></rect>
-                    <rect x="12" y="10" width="7" height="5" rx="1" fill="currentColor"></rect>
-                  </svg>
-                </button>
-                <button id="guestFullscreenBtn" type="button" class="btn-surface btn-icon-only" title="Tela Cheia" aria-label="Tela Cheia">
-                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="15 3 21 3 21 9"></polyline>
-                    <polyline points="9 21 3 21 3 15"></polyline>
-                    <polyline points="21 15 21 21 15 21"></polyline>
-                    <polyline points="3 9 3 3 9 3"></polyline>
-                  </svg>
-                </button>
+            <!-- Bottom Floating Bar -->
+            <div class="hud-bottom-bar">
+              <!-- HOST ONLY CONTROLS -->
+              <div id="hostControls" class="host-controls host-only" hidden>
+                <div class="timeline-row">
+                  <span id="hostCurrentTime" class="timecode">00:00</span>
+                  <input
+                    id="hostSeekSlider"
+                    type="range"
+                    class="seek-slider"
+                    min="0"
+                    max="100"
+                    step="0.1"
+                    value="0"
+                    aria-label="Linha do tempo do filme"
+                    disabled
+                  >
+                  <span id="hostDurationTime" class="timecode">00:00</span>
+                </div>
+
+                <div class="host-buttons-row">
+                  <div class="transport-group">
+                    <button id="rewind10Btn" type="button" class="btn-icon-text" title="Voltar 10 segundos" disabled>
+                      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path>
+                        <polyline points="3 3 3 8 8 8"></polyline>
+                      </svg>
+                      <span>-10s</span>
+                    </button>
+
+                    <button id="hostPlayPauseBtn" type="button" class="btn-play-main" title="Reproduzir / Pausar" aria-label="Reproduzir ou Pausar" disabled>
+                      <svg id="hostPlayIcon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
+                        <polygon points="7,4 20,12 7,20"></polygon>
+                      </svg>
+                      <svg id="hostPauseIcon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true" hidden>
+                        <rect x="6" y="4" width="4" height="16" rx="1"></rect>
+                        <rect x="14" y="4" width="4" height="16" rx="1"></rect>
+                      </svg>
+                    </button>
+
+                    <button id="forward10Btn" type="button" class="btn-icon-text" title="Avançar 10 segundos" disabled>
+                      <span>+10s</span>
+                      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M21 12a9 9 0 1 1-3-6.7L21 8"></path>
+                        <polyline points="21 3 21 8 16 8"></polyline>
+                      </svg>
+                    </button>
+                  </div>
+
+                  <div class="tracks-group">
+                    <div class="track-select-wrap">
+                      <label for="audioTrackSelect" class="sr-only">Faixa de Áudio</label>
+                      <select id="audioTrackSelect" class="track-select" aria-label="Faixa de Áudio" disabled>
+                        <option value="">Áudio padrão</option>
+                      </select>
+                    </div>
+
+                    <div class="track-select-wrap">
+                      <label for="subtitleTrackSelect" class="sr-only">Legenda</label>
+                      <select id="subtitleTrackSelect" class="track-select" aria-label="Legenda" disabled>
+                        <option value="">Sem legenda</option>
+                      </select>
+                    </div>
+
+                    <button id="uploadSubtitleBtn" type="button" class="btn-hud btn-sm" title="Enviar arquivo .srt ou .vtt" disabled>
+                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="17 8 12 3 7 8"></polyline>
+                        <line x1="12" y1="3" x2="12" y2="15"></line>
+                      </svg>
+                      <span class="sub-upload-label">.SRT/.VTT</span>
+                    </button>
+                    <input id="subtitleFileInput" type="file" accept=".srt,.vtt,text/vtt,application/x-subrip" hidden>
+
+                    <button id="pipBtn" type="button" class="hud-icon-btn" title="Picture-in-Picture" aria-label="Picture-in-Picture">
+                      <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="4" width="18" height="14" rx="2"></rect>
+                        <rect x="12" y="10" width="7" height="5" rx="1" fill="currentColor"></rect>
+                      </svg>
+                    </button>
+                    <button id="fullscreenBtn" type="button" class="hud-icon-btn" title="Tela Cheia" aria-label="Tela Cheia">
+                      <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="15 3 21 3 21 9"></polyline>
+                        <polyline points="9 21 3 21 3 15"></polyline>
+                        <polyline points="21 15 21 21 15 21"></polyline>
+                        <polyline points="3 9 3 3 9 3"></polyline>
+                      </svg>
+                    </button>
+                  </div>
+                </div>
               </div>
+
+              <!-- GUEST ONLY CONTROLS (strictly read-only timeline + sync status + resync) -->
+              <div id="guestControls" class="guest-controls guest-only">
+                <div class="timeline-row">
+                  <span id="guestCurrentTime" class="timecode">00:00</span>
+                  <div id="guestProgressTrack" class="readonly-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Progresso da sessão">
+                    <div id="guestProgressFill" class="readonly-progress-fill"></div>
+                  </div>
+                  <span id="guestDurationTime" class="timecode">00:00</span>
+                </div>
+
+                <div class="guest-status-row">
+                  <span id="guestSyncBadge" class="sync-badge is-synced">Sincronizado</span>
+                  <div class="guest-action-buttons">
+                    <button id="resyncBtn" type="button" class="btn-hud btn-sm">
+                      Ressincronizar
+                    </button>
+                    <button id="guestPipBtn" type="button" class="hud-icon-btn" title="Picture-in-Picture" aria-label="Picture-in-Picture">
+                      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="4" width="18" height="14" rx="2"></rect>
+                        <rect x="12" y="10" width="7" height="5" rx="1" fill="currentColor"></rect>
+                      </svg>
+                    </button>
+                    <button id="guestFullscreenBtn" type="button" class="hud-icon-btn" title="Tela Cheia" aria-label="Tela Cheia">
+                      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="15 3 21 3 21 9"></polyline>
+                        <polyline points="9 21 3 21 3 15"></polyline>
+                        <polyline points="21 15 21 21 15 21"></polyline>
+                        <polyline points="3 9 3 3 9 3"></polyline>
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Voice / camera strip (shared host + guest) -->
+              <section class="voice-strip" aria-label="Voz e câmera">
+                <div class="voice-strip-controls">
+                  <button id="toggleMicBtn" type="button" class="btn-comms" aria-pressed="false">
+                    <svg id="micOnIcon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" hidden>
+                      <rect x="9" y="2" width="6" height="12" rx="3"></rect>
+                      <path d="M5 10a7 7 0 0 0 14 0"></path>
+                      <line x1="12" y1="17" x2="12" y2="21"></line>
+                      <line x1="8" y1="21" x2="16" y2="21"></line>
+                    </svg>
+                    <svg id="micOffIcon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                      <line x1="2" y1="2" x2="22" y2="22"></line>
+                      <path d="M18.89 13.23A7.12 7.12 0 0 0 19 10"></path>
+                      <path d="M5 10a7 7 0 0 0 12 4.9"></path>
+                      <path d="M15 9.34V5a3 3 0 0 0-5.68-1.33"></path>
+                      <path d="M9 9v3a3 3 0 0 0 5.12 2.12"></path>
+                      <line x1="12" y1="17" x2="12" y2="21"></line>
+                      <line x1="8" y1="21" x2="16" y2="21"></line>
+                    </svg>
+                    <span id="micBtnLabel">Mic</span>
+                  </button>
+
+                  <button id="toggleCamBtn" type="button" class="btn-comms" aria-pressed="false">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <polygon points="23 7 16 12 23 17 23 7"></polygon>
+                      <rect x="1" y="5" width="15" height="14" rx="2"></rect>
+                    </svg>
+                    <span id="camBtnLabel">Câmera</span>
+                  </button>
+
+                  <button id="whatsappModeBtn" type="button" class="btn-comms btn-comms-wide" aria-pressed="false" title="Desativa áudio/mic WebRTC para usar ligação externa">
+                    <span>WhatsApp/FaceTime</span>
+                  </button>
+                </div>
+
+                <div class="voice-strip-mixer">
+                  <label class="mixer-row mixer-row-compact" for="movieVolumeSlider">
+                    <span class="mixer-label">Filme</span>
+                    <input id="movieVolumeSlider" type="range" class="volume-slider" min="0" max="100" value="100">
+                    <span id="movieVolumeValue" class="mixer-value">100%</span>
+                  </label>
+                  <label class="mixer-row mixer-row-compact" for="voiceVolumeSlider">
+                    <span class="mixer-label">Voz</span>
+                    <input id="voiceVolumeSlider" type="range" class="volume-slider volume-slider-amber" min="0" max="150" value="100">
+                    <span id="voiceVolumeValue" class="mixer-value">100%</span>
+                  </label>
+                  <label class="ducking-toggle ducking-toggle-compact" for="autoDuckToggle">
+                    <input id="autoDuckToggle" type="checkbox" checked>
+                    <span class="toggle-track" aria-hidden="true"><span class="toggle-thumb"></span></span>
+                    <span>Auto-duck</span>
+                  </label>
+                </div>
+
+                <span id="callStatusBadge" class="call-status-badge">Voz em espera</span>
+              </section>
             </div>
           </div>
         </div>
       </section>
-
-      <!-- Right / Bottom: Comms, Audio Mixer, Reactions & Chat -->
-      <aside id="commsLounge" class="comms-lounge" aria-label="Voz, Volumes e Chat">
-        <!-- Call & Volume Panel -->
-        <section class="comms-toolbar">
-          <div class="call-controls-row">
-            <button id="toggleMicBtn" type="button" class="btn-comms" aria-pressed="false">
-              <svg id="micOnIcon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" hidden>
-                <rect x="9" y="2" width="6" height="12" rx="3"></rect>
-                <path d="M5 10a7 7 0 0 0 14 0"></path>
-                <line x1="12" y1="17" x2="12" y2="21"></line>
-                <line x1="8" y1="21" x2="16" y2="21"></line>
-              </svg>
-              <svg id="micOffIcon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <line x1="2" y1="2" x2="22" y2="22"></line>
-                <path d="M18.89 13.23A7.12 7.12 0 0 0 19 10"></path>
-                <path d="M5 10a7 7 0 0 0 12 4.9"></path>
-                <path d="M15 9.34V5a3 3 0 0 0-5.68-1.33"></path>
-                <path d="M9 9v3a3 3 0 0 0 5.12 2.12"></path>
-                <line x1="12" y1="17" x2="12" y2="21"></line>
-                <line x1="8" y1="21" x2="16" y2="21"></line>
-              </svg>
-              <span id="micBtnLabel">Mic</span>
-            </button>
-
-            <button id="toggleCamBtn" type="button" class="btn-comms" aria-pressed="false">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <polygon points="23 7 16 12 23 17 23 7"></polygon>
-                <rect x="1" y="5" width="15" height="14" rx="2"></rect>
-              </svg>
-              <span id="camBtnLabel">Câmera</span>
-            </button>
-
-            <button id="whatsappModeBtn" type="button" class="btn-comms btn-comms-wide" aria-pressed="false" title="Desativa áudio/mic WebRTC para usar ligação externa">
-              <span>Modo WhatsApp/FaceTime</span>
-            </button>
-          </div>
-
-          <div class="call-meta-row">
-            <span id="callStatusBadge" class="call-status-badge">Voz WebRTC em espera</span>
-          </div>
-
-          <!-- Independent Volumes + Auto-Ducking -->
-          <div class="mixer-grid">
-            <label class="mixer-row" for="movieVolumeSlider">
-              <span class="mixer-label">Volume do Filme</span>
-              <input id="movieVolumeSlider" type="range" class="volume-slider" min="0" max="100" value="100">
-              <span id="movieVolumeValue" class="mixer-value">100%</span>
-            </label>
-
-            <label class="mixer-row" for="voiceVolumeSlider">
-              <span class="mixer-label">Volume da Voz</span>
-              <input id="voiceVolumeSlider" type="range" class="volume-slider volume-slider-amber" min="0" max="150" value="100">
-              <span id="voiceVolumeValue" class="mixer-value">100%</span>
-            </label>
-
-            <div class="ducking-row">
-              <label class="ducking-toggle" for="autoDuckToggle">
-                <input id="autoDuckToggle" type="checkbox" checked>
-                <span class="toggle-track" aria-hidden="true"><span class="toggle-thumb"></span></span>
-                <span>Auto-Ducking (baixa filme quando falam)</span>
-              </label>
-            </div>
-          </div>
-        </section>
-
-        <!-- Chat & Reactions -->
-        <section class="chat-section">
-          <div id="chatMessages" class="chat-messages" aria-live="polite">
-            <div class="chat-empty-hint">
-              Mandem mensagens ou reações enquanto assistem juntos.
-            </div>
-          </div>
-
-          <div id="reactionBar" class="reaction-bar" aria-label="Reações rápidas"></div>
-
-          <form id="chatForm" class="chat-form">
-            <label for="chatInput" class="sr-only">Mensagem do chat</label>
-            <input
-              id="chatInput"
-              type="text"
-              placeholder="Mensagem para a sessão..."
-              maxlength="400"
-              autocomplete="off"
-            >
-            <button id="chatSendBtn" type="submit" class="btn-primary btn-send" aria-label="Enviar mensagem">
-              <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <line x1="22" y1="2" x2="11" y2="13"></line>
-                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-              </svg>
-            </button>
-          </form>
-        </section>
-      </aside>
     </main>
   </div>
 
@@ -424,7 +385,7 @@
   <div id="inviteModal" class="modal-backdrop host-only" hidden role="dialog" aria-modal="true" aria-labelledby="inviteModalTitle">
     <div class="modal-panel modal-wide">
       <div class="modal-header">
-        <h3 id="inviteModalTitle" class="modal-title">Convidar Amor 📱</h3>
+        <h3 id="inviteModalTitle" class="modal-title">Convidar</h3>
         <div class="modal-header-actions">
           <button id="refreshTunnelBtn" type="button" class="btn-surface btn-sm">Atualizar Link</button>
           <button id="closeInviteBtn" type="button" class="btn-icon-close" aria-label="Fechar convite">✕</button>

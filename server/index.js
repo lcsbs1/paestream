@@ -7,6 +7,9 @@ const express = require('express');
 const cors = require('cors');
 const { Server: SocketIOServer } = require('socket.io');
 
+const { loadEnv } = require('./loadEnv');
+loadEnv(path.join(__dirname, '..'));
+
 const { ENDPOINTS } = require('../shared/contract');
 const { createMediaScanner, timingSafeMatch } = require('./mediaScanner');
 const { createSubtitleService } = require('./subtitleService');
@@ -14,6 +17,7 @@ const { createHlsManager } = require('./hlsManager');
 const { createRoomSync } = require('./roomSync');
 const { createTunnelManager } = require('./tunnelManager');
 const { createHostPairing } = require('./hostPairing');
+const { getIceServers } = require('./webrtcIce');
 const {
   folderLabelForClient,
   sanitizeMoviesPayload,
@@ -313,6 +317,20 @@ async function startServer(options = {}) {
     return res.json(tunnelManager.getPublicInfo());
   });
 
+  app.get(ENDPOINTS.WEBRTC_ICE, async (req, res) => {
+    try {
+      const ice = await getIceServers();
+      res.setHeader('Cache-Control', 'no-store');
+      return res.json({
+        iceServers: ice.iceServers,
+        hasTurn: ice.hasTurn,
+        source: ice.source
+      });
+    } catch (err) {
+      return res.status(500).json({ error: err.message || 'Falha ao montar iceServers.' });
+    }
+  });
+
   app.get(ENDPOINTS.HOST_TUNNEL, (req, res) => {
     if (!hasValidHostToken(req) && !isLocalhostRequest(req)) {
       return res.status(403).json({ error: 'Acesso negado ao link privado do Host.' });
@@ -350,13 +368,27 @@ if (require.main === module) {
     .then((server) => {
       const localUrl = `http://localhost:${server.port}`;
       const hostMobileLocal = `${server.tunnelManager.getHostInfo().hostMobileUrl}`;
-      console.log('====================================================');
-      console.log('🍿 PaeStream Cinema Privado iniciado!');
-      console.log(`🎬 Host PC:     ${localUrl}`);
-      console.log(`🔑 Host Mobile: ${hostMobileLocal}`);
-      console.log(`📁 Filmes em:   ${server.mediaScanner.moviesDir}`);
-      console.log(`🎞️ FFmpeg:      ${server.mediaScanner.binaries.ffmpegPath}`);
-      console.log('====================================================');
+      getIceServers()
+        .then((ice) => {
+          console.log('====================================================');
+          console.log('🍿 PaeStream Cinema Privado iniciado!');
+          console.log(`🎬 Host PC:     ${localUrl}`);
+          console.log(`🔑 Host Mobile: ${hostMobileLocal}`);
+          console.log(`📁 Filmes em:   ${server.mediaScanner.moviesDir}`);
+          console.log(`🎞️ FFmpeg:      ${server.mediaScanner.binaries.ffmpegPath}`);
+          console.log(
+            ice.hasTurn
+              ? `📡 WebRTC ICE:  TURN ativo (${ice.source})`
+              : '📡 WebRTC ICE:  só STUN — para regiões distintas, configure .env (veja .env.example)'
+          );
+          console.log('====================================================');
+        })
+        .catch(() => {
+          console.log('====================================================');
+          console.log('🍿 PaeStream Cinema Privado iniciado!');
+          console.log(`🎬 Host PC:     ${localUrl}`);
+          console.log('====================================================');
+        });
 
       const shutdown = async () => {
         console.log('\n[PaeStream] Encerrando servidor...');

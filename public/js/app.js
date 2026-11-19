@@ -23,6 +23,8 @@
     openLibraryBtn: document.getElementById('openLibraryBtn'),
     openInviteBtn: document.getElementById('openInviteBtn'),
 
+    theaterMain: document.getElementById('theaterMain'),
+
     playerStage: document.getElementById('playerStage'),
     cinemaVideo: document.getElementById('cinemaVideo'),
     videoEmptyState: document.getElementById('videoEmptyState'),
@@ -31,7 +33,7 @@
     videoBufferingBadge: document.getElementById('videoBufferingBadge'),
     bufferingText: document.getElementById('bufferingText'),
     autoplayUnlockBanner: document.getElementById('autoplayUnlockBanner'),
-    reactionLayer: document.getElementById('reactionLayer'),
+    stageActionFeedback: document.getElementById('stageActionFeedback'),
     hudMovieTitle: document.getElementById('hudMovieTitle'),
     hudPartnerVoiceBadge: document.getElementById('hudPartnerVoiceBadge'),
     pipBtn: document.getElementById('pipBtn'),
@@ -66,6 +68,7 @@
     // Comms elements
     callPipOverlay: document.getElementById('callPipOverlay'),
     remoteVideo: document.getElementById('remoteVideo'),
+    remoteAudio: document.getElementById('remoteAudio'),
     remotePlaceholder: document.getElementById('remotePlaceholder'),
     remoteInitial: document.getElementById('remoteInitial'),
     remoteExternalBadge: document.getElementById('remoteExternalBadge'),
@@ -85,10 +88,6 @@
     voiceVolumeSlider: document.getElementById('voiceVolumeSlider'),
     voiceVolumeValue: document.getElementById('voiceVolumeValue'),
     autoDuckToggle: document.getElementById('autoDuckToggle'),
-    chatMessages: document.getElementById('chatMessages'),
-    reactionBar: document.getElementById('reactionBar'),
-    chatForm: document.getElementById('chatForm'),
-    chatInput: document.getElementById('chatInput'),
 
     // Modals (Host-only)
     libraryModal: document.getElementById('libraryModal'),
@@ -127,6 +126,7 @@
   let invitePollTimer = null;
   let lastAudioSignature = '';
   let lastSubtitleSignature = '';
+  let lastKnownPlaying = null;
 
   function showToast(message, isError = false) {
     if (!dom.toastContainer || !message) return;
@@ -150,6 +150,7 @@
     bufferingBadgeEl: dom.videoBufferingBadge,
     bufferingTextEl: dom.bufferingText,
     autoplayBannerEl: dom.autoplayUnlockBanner,
+    actionFeedbackEl: dom.stageActionFeedback,
     syncBadgeEl: dom.guestSyncBadge,
     onTimeDisplay: handleTimeDisplay,
     onStatusToast: showToast,
@@ -158,6 +159,14 @@
         sendHostCommand({ action: 'pause', currentTime: player.getDuration() });
       }
     }
+  });
+
+  const comms = global.PaeStreamComms.createCommsController({
+    contract: CONTRACT,
+    player,
+    elements: dom,
+    emitSocket,
+    onToast: showToast
   });
 
   function emitSocket(eventName, payload, ack) {
@@ -169,17 +178,10 @@
     }
   }
 
-  const comms = global.PaeStreamComms.createCommsController({
-    contract: CONTRACT,
-    player,
-    elements: dom,
-    emitSocket,
-    onToast: showToast
-  });
-
   function handleTimeDisplay({ currentTime, duration, isPlaying, hasStream }) {
     const formattedCurr = player.formatTimecode(currentTime);
     const formattedDur = player.formatTimecode(duration);
+    const pct = duration > 0 ? Math.max(0, Math.min(100, (currentTime / duration) * 100)) : 0;
 
     if (role === 'host') {
       if (dom.hostCurrentTime) dom.hostCurrentTime.textContent = formattedCurr;
@@ -187,6 +189,7 @@
       if (dom.hostSeekSlider) {
         dom.hostSeekSlider.max = duration > 0 ? String(duration) : '100';
         dom.hostSeekSlider.value = duration > 0 ? String(Math.min(currentTime, duration)) : '0';
+        dom.hostSeekSlider.style.setProperty('--seek-pct', `${pct.toFixed(2)}%`);
       }
       if (dom.hostPlayIcon && dom.hostPauseIcon) {
         dom.hostPlayIcon.hidden = Boolean(isPlaying && hasStream);
@@ -195,7 +198,6 @@
     } else {
       if (dom.guestCurrentTime) dom.guestCurrentTime.textContent = formattedCurr;
       if (dom.guestDurationTime) dom.guestDurationTime.textContent = formattedDur;
-      const pct = duration > 0 ? Math.max(0, Math.min(100, (currentTime / duration) * 100)) : 0;
       if (dom.guestProgressFill) {
         dom.guestProgressFill.style.width = `${pct.toFixed(2)}%`;
       }
@@ -734,6 +736,15 @@
         }
         return;
       }
+      if (state && state.streamUrl) {
+        const nextPlaying = Boolean(state.isPlaying);
+        if (role === 'guest' && lastKnownPlaying !== null && lastKnownPlaying !== nextPlaying) {
+          player.showActionFeedback(nextPlaying ? 'play' : 'pause');
+        }
+        lastKnownPlaying = nextPlaying;
+      } else {
+        lastKnownPlaying = null;
+      }
       player.applyRoomState(state);
       renderRoomStateUi(state);
     });
@@ -753,16 +764,10 @@
       }
     });
 
-    socket.on(SOCKET_EVENTS.CHAT_MESSAGE, (msg) => {
-      comms.appendChatMessage(msg);
-    });
-
-    socket.on(SOCKET_EVENTS.CHAT_REACTION, (reaction) => {
-      comms.spawnFloatingReaction(reaction);
-    });
-
     socket.on(SOCKET_EVENTS.WEBRTC_SIGNAL, (signal) => {
-      comms.handleWebRtcSignal(signal);
+      Promise.resolve(comms.handleWebRtcSignal(signal)).catch((err) => {
+        console.warn('[PaeStream] WebRTC signal error:', err);
+      });
     });
   }
 
@@ -844,6 +849,7 @@
     dom.hostPlayPauseBtn?.addEventListener('click', () => {
       const shouldPlay = !player.isPlaying();
       player.optimisticPlayPause(shouldPlay);
+      player.showActionFeedback(shouldPlay ? 'play' : 'pause');
       sendHostCommand({
         action: shouldPlay ? 'play' : 'pause',
         currentTime: player.getAbsoluteTime()
@@ -852,6 +858,7 @@
 
     dom.rewind10Btn?.addEventListener('click', () => {
       const target = Math.max(0, player.getAbsoluteTime() - 10);
+      player.showActionFeedback('rewind');
       sendHostCommand({ action: 'seek', currentTime: target });
     });
 
@@ -859,6 +866,7 @@
       const dur = player.getDuration();
       const raw = player.getAbsoluteTime() + 10;
       const target = dur > 0 ? Math.min(dur - 0.5, raw) : raw;
+      player.showActionFeedback('forward');
       sendHostCommand({ action: 'seek', currentTime: Math.max(0, target) });
     });
 
@@ -868,8 +876,12 @@
       dom.hostSeekSlider.addEventListener('touchstart', beginScrub, { passive: true });
       dom.hostSeekSlider.addEventListener('input', (e) => {
         player.setHostScrubbing(true);
+        const val = Number(e.target.value) || 0;
+        const max = Number(dom.hostSeekSlider.max) || 100;
+        const pct = max > 0 ? Math.max(0, Math.min(100, (val / max) * 100)) : 0;
+        dom.hostSeekSlider.style.setProperty('--seek-pct', `${pct.toFixed(2)}%`);
         if (dom.hostCurrentTime) {
-          dom.hostCurrentTime.textContent = player.formatTimecode(Number(e.target.value) || 0);
+          dom.hostCurrentTime.textContent = player.formatTimecode(val);
         }
       });
       dom.hostSeekSlider.addEventListener('change', (e) => {
