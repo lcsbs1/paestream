@@ -69,7 +69,7 @@ function createRoomSync({ io, mediaScanner, hlsManager, getHostToken }) {
       else guestConnected = true;
       users.push({
         id: sock.id,
-        displayName: sock.data.displayName || (role === 'host' ? 'Lucas' : 'Amor'),
+        displayName: sock.data.displayName || (role === 'host' ? 'Lucas' : 'Convidado'),
         role
       });
     }
@@ -303,7 +303,7 @@ function createRoomSync({ io, mediaScanner, hlsManager, getHostToken }) {
       joined: false,
       isHost: false,
       role: 'guest',
-      displayName: 'Convidada'
+      displayName: 'Convidado'
     };
 
     socket.on(SOCKET_EVENTS.ROOM_JOIN, (payload = {}, ack) => {
@@ -319,13 +319,13 @@ function createRoomSync({ io, mediaScanner, hlsManager, getHostToken }) {
         } else {
           socket.emit(SOCKET_EVENTS.HOST_ERROR, {
             code: 'INVALID_HOST_TOKEN',
-            message: 'Token de Host inválido. Conexão restrita ao modo Convidada.'
+            message: 'Token de Host inválido. Conexão restrita ao modo Convidado.'
           });
         }
       }
 
       const rawName = typeof payload.displayName === 'string' ? payload.displayName.trim() : '';
-      const displayName = (rawName || (isHost ? 'Lucas' : 'Amor')).slice(0, 40);
+      const displayName = (rawName || (isHost ? 'Lucas' : 'Convidado')).slice(0, 40);
 
       socket.data.joined = true;
       socket.data.isHost = isHost;

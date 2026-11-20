@@ -21,6 +21,15 @@
     );
   }
 
+  function isMobileDevice() {
+    if (isAppleMobileDevice() || /Android/i.test(navigator.userAgent)) return true;
+    try {
+      return Boolean(global.matchMedia && global.matchMedia('(pointer: coarse)').matches);
+    } catch (_err) {
+      return false;
+    }
+  }
+
   function createPlayerController(options) {
     const {
       video,
@@ -52,6 +61,14 @@
     let duckFactor = 1.0;
     let hudTimer = null;
     let feedbackTimer = null;
+    let loadToken = 0;
+    let lastHiddenAt = 0;
+    let resumeTimer = null;
+    let watchdogTimer = null;
+    let isPointerDownInHud = false;
+    let lastInputWasKeyboard = false;
+    let lastMouseX = null;
+    let lastMouseY = null;
 
     const useNativeHls = Boolean(video.canPlayType && video.canPlayType('application/vnd.apple.mpegurl'));
 
@@ -215,8 +232,10 @@
       }
     }
 
-    function loadStream(streamUrl, epoch, baseOffset, targetAbsTime) {
+    function loadStream(streamUrl, epoch, baseOffset, targetAbsTime, loadOptions = {}) {
       destroyHls();
+      loadToken += 1;
+      const token = loadToken;
       currentEpoch = epoch;
       currentStreamUrl = streamUrl;
       currentBaseOffset = Number(baseOffset) || 0;
@@ -225,12 +244,20 @@
       setBuffering(true, 'Carregando vídeo...');
       showAutoplayBanner(false);
 
+      const isStale = () =>
+        token !== loadToken || currentEpoch !== epoch || currentStreamUrl !== streamUrl;
+
       if (useNativeHls) {
-        video.src = streamUrl;
+        // Cache-busting query forces Safari to build a fresh AVPlayerItem after a GPU surface loss.
+        let src = streamUrl;
+        if (loadOptions.cacheBust) {
+          src = `${streamUrl}${streamUrl.includes('?') ? '&' : '?'}_r=${Date.now()}`;
+        }
+        video.src = src;
         video.load();
 
         const onNativeReady = () => {
-          if (currentEpoch !== epoch || currentStreamUrl !== streamUrl) return;
+          if (isStale()) return;
           const desiredLocal = Math.max(0, latestTargetAbsTime - currentBaseOffset);
           if (desiredLocal > 0.35) {
             seekSafely(desiredLocal);
@@ -242,7 +269,7 @@
 
         video.addEventListener('loadedmetadata', onNativeReady, { once: true });
         video.addEventListener('canplay', () => {
-          if (currentEpoch !== epoch || currentStreamUrl !== streamUrl) return;
+          if (isStale()) return;
           const desiredLocal = Math.max(0, latestTargetAbsTime - currentBaseOffset);
           if (Math.abs((video.currentTime || 0) - desiredLocal) > 1.5) {
             seekSafely(desiredLocal);
@@ -275,9 +302,10 @@
       hls.attachMedia(video);
 
       hls.on(global.Hls.Events.MANIFEST_PARSED, () => {
-        if (hlsInstance !== hls) return;
-        if (initialLocal > 0.35) {
-          seekSafely(initialLocal);
+        if (hlsInstance !== hls || isStale()) return;
+        const desiredLocal = Math.max(0, latestTargetAbsTime - currentBaseOffset);
+        if (desiredLocal > 0.35) {
+          seekSafely(desiredLocal);
         }
         reapplySubtitleMode();
         setBuffering(false);
@@ -425,8 +453,60 @@
       syncGuestToTarget(latestTargetAbsTime, latestExpectedPlaying);
     }
 
-    function resyncNow() {
+    function isVideoFrameBroken() {
+      return Boolean(video.error) || video.readyState < 2 || !video.videoWidth || !video.videoHeight;
+    }
+
+    /**
+     * Full pipeline reset: frees the stuck decoder / GPU surface and reloads the current HLS
+     * session at the latest known room time. Used when a mobile browser returns from background
+     * with a black frame.
+     */
+    function reloadCurrentStream(targetAbsTime) {
       if (!currentStreamUrl) return;
+      const url = currentStreamUrl;
+      const epoch = currentEpoch;
+      const base = currentBaseOffset;
+      const subtitle = currentSubtitleUrl;
+      const explicitTarget = Number(targetAbsTime);
+
+      clearTimeout(watchdogTimer);
+      destroyHls();
+      loadToken += 1;
+      const token = loadToken;
+
+      try {
+        video.pause();
+      } catch (_err) {
+        // ignore
+      }
+      video.removeAttribute('src');
+      try {
+        video.load();
+      } catch (_err) {
+        // ignore
+      }
+      setBuffering(true, 'Recuperando vídeo...');
+
+      setTimeout(() => {
+        if (token !== loadToken || currentStreamUrl !== url || currentEpoch !== epoch) return;
+        const target = Number.isFinite(latestTargetAbsTime)
+          ? latestTargetAbsTime
+          : (Number.isFinite(explicitTarget) ? explicitTarget : 0);
+        loadStream(url, epoch, base, target, { cacheBust: useNativeHls });
+        // video.load() may have reset textTracks: force the subtitle track to be re-attached.
+        currentSubtitleUrl = null;
+        updateSubtitleTrack(subtitle);
+      }, 60);
+    }
+
+    function resyncNow(resyncOptions = {}) {
+      if (!currentStreamUrl) return;
+      if (resyncOptions.allowReload && isVideoFrameBroken()) {
+        reloadCurrentStream(latestTargetAbsTime);
+        updateGuestSyncBadge(0);
+        return;
+      }
       video.playbackRate = 1.0;
       if (video.readyState >= 1) {
         seekSafely(Math.max(0, latestTargetAbsTime - currentBaseOffset));
@@ -436,6 +516,87 @@
       applyDesiredPlaybackState();
       updateGuestSyncBadge(0);
       notifyTimeDisplay();
+    }
+
+    function getDecodedFrameCount() {
+      try {
+        if (typeof video.getVideoPlaybackQuality === 'function') {
+          const q = video.getVideoPlaybackQuality();
+          if (q && typeof q.totalVideoFrames === 'number') return q.totalVideoFrames;
+        }
+      } catch (_err) {
+        // ignore
+      }
+      if (typeof video.webkitDecodedFrameCount === 'number') return video.webkitDecodedFrameCount;
+      return null;
+    }
+
+    function startFrameWatchdog() {
+      clearTimeout(watchdogTimer);
+      const startFrames = getDecodedFrameCount();
+      const startTime = video.currentTime || 0;
+      watchdogTimer = setTimeout(() => {
+        if (!currentStreamUrl || document.hidden) return;
+        if (isVideoFrameBroken()) {
+          reloadCurrentStream(latestTargetAbsTime);
+          return;
+        }
+        // Paused (or autoplay blocked): nothing to measure; the banner/resync flow handles it.
+        if (!latestExpectedPlaying || video.paused) return;
+        const frames = getDecodedFrameCount();
+        const framesStuck = startFrames !== null && frames !== null && frames <= startFrames;
+        const timeStuck = Math.abs((video.currentTime || 0) - startTime) < 0.05;
+        if (framesStuck || timeStuck) {
+          reloadCurrentStream(latestTargetAbsTime);
+        }
+      }, 1100);
+    }
+
+    function handleAppResume(persisted) {
+      if (!currentStreamUrl || document.hidden) return;
+      const hiddenMs = lastHiddenAt ? Date.now() - lastHiddenAt : 0;
+      lastHiddenAt = 0;
+      const mobile = isMobileDevice();
+
+      if (
+        persisted ||
+        isVideoFrameBroken() ||
+        (isAppleMobileDevice() && hiddenMs >= 1000) ||
+        (mobile && hiddenMs >= 3000)
+      ) {
+        reloadCurrentStream(latestTargetAbsTime);
+        return;
+      }
+      if (!mobile || hiddenMs < 800) return;
+
+      // Light recovery first; the watchdog escalates to a full reload if frames stay frozen.
+      if (hlsInstance) {
+        try {
+          hlsInstance.startLoad();
+        } catch (_err) {
+          // ignore
+        }
+      }
+      try {
+        if (video.readyState >= 1) {
+          video.currentTime = video.currentTime;
+        }
+      } catch (_err) {
+        // ignore
+      }
+      applyDesiredPlaybackState();
+      startFrameWatchdog();
+    }
+
+    function onPageHidden() {
+      if (!lastHiddenAt) lastHiddenAt = Date.now();
+      clearTimeout(watchdogTimer);
+      clearTimeout(resumeTimer);
+    }
+
+    function onPageVisible(persisted) {
+      clearTimeout(resumeTimer);
+      resumeTimer = setTimeout(() => handleAppResume(persisted), 400);
     }
 
     function unlockMedia() {
@@ -551,6 +712,16 @@
       }
     }
 
+    function syncCursorVisibility() {
+      if (!stageEl) return;
+      const hide =
+        Boolean(currentStreamUrl) &&
+        !video.paused &&
+        !video.ended &&
+        !stageEl.classList.contains('hud-visible');
+      stageEl.classList.toggle('is-cursor-hidden', hide);
+    }
+
     function syncStageStateClasses() {
       if (!stageEl) return;
       const isEmpty = !currentStreamUrl;
@@ -561,13 +732,26 @@
         clearTimeout(hudTimer);
         stageEl.classList.add('hud-visible');
       }
+      syncCursorVisibility();
     }
 
-    function isHudControlFocused() {
+    /**
+     * Keep the HUD open only for real, ongoing interactions. A button that merely kept focus
+     * after a mouse click (e.g. the fullscreen button) must NOT pin the HUD forever.
+     */
+    function shouldKeepHudOpen() {
+      if (isHostScrubbing || isPointerDownInHud) return true;
       if (!stageEl) return false;
       const active = document.activeElement;
       if (!active || active === stageEl || !stageEl.contains(active)) return false;
-      return Boolean(active.closest('button, input, select, a'));
+      if (active.tagName === 'SELECT') return true;
+      if (!lastInputWasKeyboard) return false;
+      if (!active.closest('button, input, select, a')) return false;
+      try {
+        return active.matches(':focus-visible');
+      } catch (_err) {
+        return false;
+      }
     }
 
     function hideHudNow() {
@@ -575,19 +759,22 @@
       clearTimeout(hudTimer);
       if (!currentStreamUrl || video.paused || video.ended || isHostScrubbing) return;
       stageEl.classList.remove('hud-visible');
+      syncCursorVisibility();
     }
 
     function revealHudTemporarily() {
       if (!stageEl) return;
       stageEl.classList.add('hud-visible');
+      syncCursorVisibility();
       clearTimeout(hudTimer);
       if (!currentStreamUrl || video.paused || video.ended) return;
       hudTimer = setTimeout(() => {
-        if (isHostScrubbing || isHudControlFocused()) {
+        if (shouldKeepHudOpen()) {
           revealHudTemporarily();
           return;
         }
         stageEl.classList.remove('hud-visible');
+        syncCursorVisibility();
       }, 2400);
     }
 
@@ -644,6 +831,9 @@
       setBuffering(false);
       syncStageStateClasses();
       reapplySubtitleMode();
+      if (stageEl && stageEl.classList.contains('hud-visible')) {
+        revealHudTemporarily();
+      }
     });
     video.addEventListener('canplay', () => {
       setBuffering(false);
@@ -661,10 +851,46 @@
         resyncNow();
       }
     });
-    document.addEventListener('fullscreenchange', reapplySubtitleMode);
+
+    function handleFullscreenChange() {
+      reapplySubtitleMode();
+      // Drop the focus left on the fullscreen button by the click so it can't pin the HUD.
+      const active = document.activeElement;
+      if (active && stageEl && active !== stageEl && stageEl.contains(active) && typeof active.blur === 'function') {
+        active.blur();
+      }
+      revealHudTemporarily();
+    }
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+
+    // Mobile background/foreground recovery (black video frame after returning to the browser)
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        onPageHidden();
+      } else {
+        onPageVisible(false);
+      }
+    });
+    global.addEventListener('pagehide', onPageHidden);
+    global.addEventListener('pageshow', (e) => {
+      if (e && e.persisted) onPageVisible(true);
+    });
+
+    document.addEventListener('pointerdown', () => {
+      lastInputWasKeyboard = false;
+    }, true);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Tab' || e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        lastInputWasKeyboard = true;
+      }
+    }, true);
 
     if (stageEl) {
       stageEl.addEventListener('pointerdown', (e) => {
+        if (e.target.closest('.hud-top-bar, .hud-bottom-bar')) {
+          isPointerDownInHud = true;
+        }
         const hitControl = e.target.closest(
           '.hud-top-bar, .hud-bottom-bar, button, input, select, a, .call-pip-overlay, .autoplay-unlock-banner, .video-empty-state'
         );
@@ -682,16 +908,41 @@
           revealHudTemporarily();
         }
       });
-      stageEl.addEventListener('mousemove', revealHudTemporarily);
+      const releaseHudPointer = () => {
+        if (!isPointerDownInHud) return;
+        isPointerDownInHud = false;
+        revealHudTemporarily();
+      };
+      global.addEventListener('pointerup', releaseHudPointer);
+      global.addEventListener('pointercancel', releaseHudPointer);
+
+      stageEl.addEventListener('mousemove', (e) => {
+        if (lastMouseX !== null && Math.hypot(e.clientX - lastMouseX, e.clientY - lastMouseY) < 3) return;
+        lastMouseX = e.clientX;
+        lastMouseY = e.clientY;
+        revealHudTemporarily();
+      });
+      stageEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Tab') revealHudTemporarily();
+      });
       stageEl.addEventListener('focusin', revealHudTemporarily);
       stageEl.addEventListener('input', revealHudTemporarily);
-      stageEl.addEventListener('change', revealHudTemporarily);
+      stageEl.addEventListener('change', (e) => {
+        // After picking an audio/subtitle track, release the <select> so the HUD can auto-hide.
+        if (e.target && e.target.tagName === 'SELECT' && typeof e.target.blur === 'function') {
+          e.target.blur();
+        }
+        revealHudTemporarily();
+      });
       stageEl.addEventListener('mouseleave', () => {
-        if (currentStreamUrl && !video.paused && !video.ended && !isHostScrubbing && !isHudControlFocused()) {
+        lastMouseX = null;
+        lastMouseY = null;
+        if (currentStreamUrl && !video.paused && !video.ended && !shouldKeepHudOpen()) {
           clearTimeout(hudTimer);
           hudTimer = setTimeout(() => {
-            if (!isHostScrubbing && !isHudControlFocused()) {
+            if (!shouldKeepHudOpen()) {
               stageEl.classList.remove('hud-visible');
+              syncCursorVisibility();
             }
           }, 800);
         }
@@ -702,6 +953,10 @@
     if (autoplayBannerEl) {
       autoplayBannerEl.addEventListener('click', () => {
         unlockMedia();
+        if (currentStreamUrl && isVideoFrameBroken()) {
+          reloadCurrentStream(latestTargetAbsTime);
+          return;
+        }
         if (role === 'guest') {
           resyncNow();
         } else {
@@ -717,6 +972,7 @@
       applyRoomState,
       handleSyncPulse,
       resyncNow,
+      reloadCurrentStream,
       setMovieVolume,
       setDuckFactor,
       getAbsoluteTime,

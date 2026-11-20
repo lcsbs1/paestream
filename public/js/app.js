@@ -35,7 +35,6 @@
     autoplayUnlockBanner: document.getElementById('autoplayUnlockBanner'),
     stageActionFeedback: document.getElementById('stageActionFeedback'),
     hudMovieTitle: document.getElementById('hudMovieTitle'),
-    hudPartnerVoiceBadge: document.getElementById('hudPartnerVoiceBadge'),
     pipBtn: document.getElementById('pipBtn'),
     fullscreenBtn: document.getElementById('fullscreenBtn'),
 
@@ -71,7 +70,6 @@
     remoteAudio: document.getElementById('remoteAudio'),
     remotePlaceholder: document.getElementById('remotePlaceholder'),
     remoteInitial: document.getElementById('remoteInitial'),
-    remoteExternalBadge: document.getElementById('remoteExternalBadge'),
     remoteSpeakingDot: document.getElementById('remoteSpeakingDot'),
     localVideo: document.getElementById('localVideo'),
     pipCollapseBtn: document.getElementById('pipCollapseBtn'),
@@ -81,7 +79,6 @@
     micBtnLabel: document.getElementById('micBtnLabel'),
     toggleCamBtn: document.getElementById('toggleCamBtn'),
     camBtnLabel: document.getElementById('camBtnLabel'),
-    whatsappModeBtn: document.getElementById('whatsappModeBtn'),
     callStatusBadge: document.getElementById('callStatusBadge'),
     movieVolumeSlider: document.getElementById('movieVolumeSlider'),
     movieVolumeValue: document.getElementById('movieVolumeValue'),
@@ -118,7 +115,7 @@
   let role = 'guest';
   let roleSource = 'guest';
   let hostToken = null;
-  let displayName = 'Amor';
+  let displayName = 'Convidado';
   let joined = false;
   let socket = null;
   let latestRoomState = null;
@@ -302,7 +299,7 @@
     hostEls.forEach((el) => el.remove());
 
     if (dom.entryRoleBadge) {
-      dom.entryRoleBadge.textContent = 'Convidada';
+      dom.entryRoleBadge.textContent = 'Convidado';
       dom.entryRoleBadge.classList.remove('is-host');
     }
     if (dom.emptyStateText) {
@@ -369,7 +366,7 @@
       dom.connectionLabel.textContent = 'Vocês 2 na sala';
     } else if (role === 'host') {
       dom.connectionPill.classList.add('is-waiting');
-      dom.connectionLabel.textContent = 'Aguardando Amor';
+      dom.connectionLabel.textContent = 'Aguardando Convidado';
     } else {
       dom.connectionPill.classList.add(state.hostConnected ? 'is-pair-online' : 'is-waiting');
       dom.connectionLabel.textContent = state.hostConnected ? 'Host na sala' : 'Aguardando Host';
@@ -467,6 +464,8 @@
     if (role !== 'host') return;
     hostHeartbeatTimer = setInterval(() => {
       if (role !== 'host' || !joined || !socket || !socket.connected) return;
+      // While backgrounded the OS may pause the video: don't broadcast that as a real pause.
+      if (document.hidden) return;
       if (!latestRoomState || !latestRoomState.movieId) return;
       socket.emit(SOCKET_EVENTS.HOST_TIME_UPDATE, {
         currentTime: player.getAbsoluteTime(),
@@ -683,7 +682,7 @@
     });
   }
 
-  function joinRoomOnSocket() {
+  function joinRoomOnSocket(joinOptions = {}) {
     if (!socket || !socket.connected || !joined) return;
     socket.emit(
       SOCKET_EVENTS.ROOM_JOIN,
@@ -704,7 +703,7 @@
         }
         if (role === 'host') {
           startHostHeartbeat();
-          loadMovieLibrary();
+          if (!joinOptions.skipLibrary) loadMovieLibrary();
         }
       }
     );
@@ -785,9 +784,9 @@
 
     dom.resyncBtn?.addEventListener('click', () => {
       player.unlockMedia();
-      player.resyncNow();
+      player.resyncNow({ allowReload: true });
       if (socket && socket.connected && joined) {
-        joinRoomOnSocket();
+        joinRoomOnSocket({ skipLibrary: true });
       }
       showToast('Sincronizado com a sessão!');
     });
@@ -835,7 +834,7 @@
 
     dom.closeInviteBtn?.addEventListener('click', () => closeModal(dom.inviteModal));
     dom.refreshTunnelBtn?.addEventListener('click', () => loadTunnelInviteInfo());
-    dom.copyGuestUrlBtn?.addEventListener('click', () => copyInputValue(dom.guestUrlInput, 'Link da Convidada'));
+    dom.copyGuestUrlBtn?.addEventListener('click', () => copyInputValue(dom.guestUrlInput, 'Link do Convidado'));
     dom.copyHostUrlBtn?.addEventListener('click', () => copyInputValue(dom.hostMobileUrlInput, 'Link Host Mobile'));
 
     // Modal backdrop & Escape close
@@ -888,6 +887,8 @@
         player.setHostScrubbing(false);
         const target = Number(e.target.value) || 0;
         sendHostCommand({ action: 'seek', currentTime: target });
+        // Release focus so the HUD can auto-hide after seeking with the mouse.
+        e.target.blur();
       });
     }
 
@@ -972,10 +973,16 @@
       lockGuestMode();
     }
 
-    const defaultName = role === 'host' ? 'Lucas' : 'Amor';
+    const defaultName = role === 'host' ? 'Lucas' : 'Convidado';
     let savedName = defaultName;
     try {
-      savedName = global.localStorage.getItem(`paestream_name_${role}`) || defaultName;
+      const storageKey = `paestream_name_${role}`;
+      savedName = global.localStorage.getItem(storageKey) || defaultName;
+      // Migrate the legacy guest default name.
+      if (role === 'guest' && savedName === 'Amor') {
+        savedName = defaultName;
+        global.localStorage.setItem(storageKey, savedName);
+      }
     } catch (_err) {
       savedName = defaultName;
     }
@@ -987,6 +994,21 @@
     wireStageAndGuestEvents();
     wireHostEvents();
     wireKeyboardShortcuts();
+
+    // Returning to the foreground (mobile background / tab switch): resync room + media.
+    const handleForegroundResume = () => {
+      if (document.hidden || !joined || !socket) return;
+      if (!socket.connected) {
+        socket.connect(); // 'connect' handler re-joins the room
+      } else {
+        joinRoomOnSocket({ skipLibrary: true });
+      }
+      comms.handleAppResume();
+    };
+    document.addEventListener('visibilitychange', handleForegroundResume);
+    global.addEventListener('pageshow', (e) => {
+      if (e && e.persisted) handleForegroundResume();
+    });
 
     dom.entryForm?.addEventListener('submit', (e) => {
       e.preventDefault();

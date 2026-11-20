@@ -31,7 +31,7 @@
       <p class="entry-subtitle">Cinema particular sincronizado para vocês dois.</p>
 
       <div class="entry-meta">
-        <span id="entryRoleBadge" class="role-badge">Convidada</span>
+        <span id="entryRoleBadge" class="role-badge">Convidado</span>
         <span id="entryMovieHint" class="entry-movie-hint">Conectando à sala...</span>
       </div>
 
@@ -102,12 +102,15 @@
             <div class="call-pip-remote-wrap">
               <video id="remoteVideo" autoplay muted playsinline webkit-playsinline></video>
               <div id="remotePlaceholder" class="remote-placeholder">
-                <span id="remoteInitial" class="remote-initial">A</span>
-                <span id="remoteExternalBadge" class="remote-external-badge" hidden>Ligação externa</span>
+                <span id="remoteInitial" class="remote-initial">C</span>
               </div>
               <span id="remoteSpeakingDot" class="speaking-dot" title="Falando" hidden></span>
             </div>
             <video id="localVideo" class="call-pip-local" autoplay muted playsinline webkit-playsinline hidden></video>
+            <span class="pip-resize-handle pip-resize-nw" data-resize="nw" aria-hidden="true"></span>
+            <span class="pip-resize-handle pip-resize-ne" data-resize="ne" aria-hidden="true"></span>
+            <span class="pip-resize-handle pip-resize-sw" data-resize="sw" aria-hidden="true"></span>
+            <span class="pip-resize-handle pip-resize-se" data-resize="se" aria-hidden="true"></span>
             <button id="pipCollapseBtn" type="button" class="pip-collapse-btn" title="Minimizar ou expandir câmera" aria-label="Minimizar ou expandir câmera">
               <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <polyline points="15 3 21 3 21 9"></polyline>
@@ -142,8 +145,6 @@
                   <span class="presence-dot" aria-hidden="true"></span>
                   <span id="connectionLabel">Conectando...</span>
                 </div>
-
-                <span id="hudPartnerVoiceBadge" class="hud-voice-badge" hidden></span>
 
                 <button id="openLibraryBtn" type="button" class="btn-hud host-only" hidden>
                   <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -319,10 +320,6 @@
                     </svg>
                     <span id="camBtnLabel">Câmera</span>
                   </button>
-
-                  <button id="whatsappModeBtn" type="button" class="btn-comms btn-comms-wide" aria-pressed="false" title="Desativa áudio/mic WebRTC para usar ligação externa">
-                    <span>WhatsApp/FaceTime</span>
-                  </button>
                 </div>
 
                 <div class="voice-strip-mixer">
@@ -381,7 +378,7 @@
     </div>
   </div>
 
-  <!-- HOST MODAL: Invite Amor & Host Mobile -->
+  <!-- HOST MODAL: Invite Guest & Host Mobile -->
   <div id="inviteModal" class="modal-backdrop host-only" hidden role="dialog" aria-modal="true" aria-labelledby="inviteModalTitle">
     <div class="modal-panel modal-wide">
       <div class="modal-header">
@@ -398,14 +395,14 @@
 
       <div class="invite-grid">
         <div class="invite-block">
-          <h4 class="invite-block-title">Link da Convidada (Amor)</h4>
-          <p class="invite-block-desc">Sem controles de pausa ou busca — ela entra direto assistindo com você.</p>
+          <h4 class="invite-block-title">Link do Convidado</h4>
+          <p class="invite-block-desc">Sem controles de pausa ou busca — o convidado entra direto assistindo com você.</p>
           <div class="qr-frame">
-            <img id="guestQrImg" alt="QR Code da Convidada" hidden>
+            <img id="guestQrImg" alt="QR Code do Convidado" hidden>
             <span id="guestQrPlaceholder" class="qr-placeholder">Gerando QR Code...</span>
           </div>
           <div class="copy-row">
-            <input id="guestUrlInput" type="text" readonly aria-label="Link da Convidada">
+            <input id="guestUrlInput" type="text" readonly aria-label="Link do Convidado">
             <button id="copyGuestUrlBtn" type="button" class="btn-surface btn-sm">Copiar</button>
           </div>
           <a id="whatsappShareLink" class="btn-primary btn-whatsapp" target="_blank" rel="noopener noreferrer" href="#">

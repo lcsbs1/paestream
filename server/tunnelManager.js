@@ -218,7 +218,7 @@ function createTunnelManager({ rootDir, port, enabled = true, createHostPairingC
             publicUrl = match[0];
             status = 'online';
             await refreshQrCodes();
-            console.log(`\n🌐 [PaeStream] Túnel HTTPS ativo para Convidada: ${publicUrl}`);
+            console.log(`\n🌐 [PaeStream] Túnel HTTPS ativo para Convidado: ${publicUrl}`);
             console.log(`📱 [PaeStream] Host Mobile URL: ${getHostMobileUrl()}\n`);
           }
         };

@@ -160,6 +160,28 @@ async function runTests() {
     const baseUrl = `http://127.0.0.1:${server.port}`;
     console.log(`[verify] Servidor de teste iniciado em ${baseUrl}`);
 
+    // 0. Frontend static checks: WhatsApp call mode removed, guest wording, free camera handles
+    const indexHtml = await (await fetch(`${baseUrl}/`)).text();
+    const appJs = await (await fetch(`${baseUrl}/js/app.js`)).text();
+    const commsJs = await (await fetch(`${baseUrl}/js/comms.js`)).text();
+    const playerJs = await (await fetch(`${baseUrl}/js/player.js`)).text();
+    assert(!indexHtml.includes('whatsappModeBtn'), 'Botão de modo WhatsApp/FaceTime deve ter sido removido');
+    assert(!indexHtml.includes('WhatsApp/FaceTime'), 'Texto WhatsApp/FaceTime não pode aparecer na interface');
+    assert(!commsJs.includes('whatsappMode'), 'comms.js não pode conter lógica de modo WhatsApp');
+    assert(indexHtml.includes('whatsappShareLink'), 'Botão "Enviar no WhatsApp" do convite deve permanecer');
+    for (const [name, src] of [['index.html', indexHtml], ['app.js', appJs], ['comms.js', commsJs]]) {
+      assert(!/\bAmor\b(?!'\))/.test(src.replace("savedName === 'Amor'", '')), `${name} não pode conter o termo "Amor"`);
+      assert(!/Convidada/.test(src), `${name} não pode conter o termo "Convidada"`);
+    }
+    assert(indexHtml.includes('Link do Convidado'), 'Modal Convidar deve exibir "Link do Convidado"');
+    for (const corner of ['nw', 'ne', 'sw', 'se']) {
+      assert(indexHtml.includes(`data-resize="${corner}"`), `Alça de redimensionamento ${corner} ausente na câmera`);
+    }
+    assert(/const remoteLiveVideo\s*=/.test(commsJs), 'remoteLiveVideo deve estar declarado em updateCallUi');
+    assert(playerJs.includes('visibilitychange') && playerJs.includes('reloadCurrentStream'), 'player.js deve recuperar o vídeo ao voltar do segundo plano');
+    assert(!playerJs.includes('isHudControlFocused'), 'HUD não pode mais ficar preso por foco de clique');
+    console.log('[verify] OK: Interface sem modo WhatsApp, termo "Convidado", câmera redimensionável e recuperação mobile.');
+
     // 1. Test host bootstrap & security gates
     const bootRes = await fetch(`${baseUrl}${ENDPOINTS.HOST_BOOTSTRAP}`);
     assert.strictEqual(bootRes.status, 200, 'Bootstrap via localhost deve retornar 200');
@@ -415,7 +437,7 @@ async function runTests() {
 
     const guestJoin = await emitWithAck(guestSocket, SOCKET_EVENTS.ROOM_JOIN, {
       role: 'guest',
-      displayName: 'Amor'
+      displayName: 'Convidado'
     });
     assert.strictEqual(guestJoin.role, 'guest');
     assert(
@@ -467,7 +489,7 @@ async function runTests() {
     guestSocket.emit(SOCKET_EVENTS.HOST_TIME_UPDATE, { currentTime: 99, isPlaying: true });
     await timeForbiddenPromise;
     assert.strictEqual(server.roomSync.getPublicState().isPlaying, false, 'Comando de guest não pode alterar isPlaying');
-    console.log('[verify] OK: Comandos host:command e host:time-update da Guest bloqueados com FORBIDDEN.');
+    console.log('[verify] OK: Comandos host:command e host:time-update do Convidado bloqueados com FORBIDDEN.');
 
     // Host commands: play -> pause -> set-audio -> seek (backward restarts FFmpeg) -> set-subtitle
     const playStatePromise = waitForEvent(

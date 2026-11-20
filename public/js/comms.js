@@ -14,7 +14,7 @@
 
     let role = 'guest';
     let myName = '';
-    let partnerName = 'Amor';
+    let partnerName = 'Convidado';
     let partnerConnected = false;
     let joined = false;
 
@@ -30,7 +30,6 @@
     let ignoreOffer = false;
     let isSettingRemoteAnswerPending = false;
     let iceCandidateQueue = [];
-    let partnerExternalMode = false;
     let partnerMicActive = false;
     let partnerHasVideo = false;
     let partnerHasAudio = false;
@@ -53,7 +52,6 @@
 
     let micActive = false;
     let camActive = false;
-    let whatsappMode = false;
     let movieVolume = 1.0;
     let voiceVolume = 1.0;
     let autoDuckEnabled = true;
@@ -141,7 +139,7 @@
       if (remoteVideo) remoteVideo.muted = true;
 
       if (usingWebAudioForVoice && voiceGainNode && audioCtx && audioCtx.state === 'running') {
-        voiceGainNode.gain.value = whatsappMode ? 0 : voiceVolume;
+        voiceGainNode.gain.value = voiceVolume;
         if (remoteAudio) {
           remoteAudio.muted = true;
         }
@@ -149,7 +147,7 @@
       }
 
       if (remoteAudio) {
-        remoteAudio.muted = Boolean(whatsappMode);
+        remoteAudio.muted = false;
         try {
           remoteAudio.volume = Math.max(0, Math.min(1, voiceVolume));
         } catch (_err) {
@@ -243,7 +241,7 @@
     function startDuckingMonitor() {
       if (duckTimer) return;
       duckTimer = setInterval(() => {
-        if (!autoDuckEnabled || whatsappMode || !analyserNode || !analyserData) {
+        if (!autoDuckEnabled || !analyserNode || !analyserData) {
           if (currentDuckFactor !== 1.0) {
             currentDuckFactor = 1.0;
             player.setDuckFactor(1.0);
@@ -293,52 +291,38 @@
         micBtnLabel,
         toggleCamBtn,
         camBtnLabel,
-        whatsappModeBtn,
         callStatusBadge,
         callPipOverlay,
         remotePlaceholder,
         remoteInitial,
-        remoteExternalBadge,
-        localVideo,
-        hudPartnerVoiceBadge
+        localVideo
       } = elements;
 
       if (toggleMicBtn) {
-        toggleMicBtn.setAttribute('aria-pressed', String(micActive && !whatsappMode));
-        toggleMicBtn.disabled = whatsappMode;
+        toggleMicBtn.setAttribute('aria-pressed', String(micActive));
+        toggleMicBtn.disabled = false;
       }
-      if (micOnIcon) micOnIcon.hidden = !(micActive && !whatsappMode);
-      if (micOffIcon) micOffIcon.hidden = micActive && !whatsappMode;
-      if (micBtnLabel) micBtnLabel.textContent = micActive && !whatsappMode ? 'Mic On' : 'Mic';
+      if (micOnIcon) micOnIcon.hidden = !micActive;
+      if (micOffIcon) micOffIcon.hidden = micActive;
+      if (micBtnLabel) micBtnLabel.textContent = micActive ? 'Mic On' : 'Mic';
 
       if (toggleCamBtn) {
         toggleCamBtn.setAttribute('aria-pressed', String(camActive));
       }
       if (camBtnLabel) camBtnLabel.textContent = camActive ? 'Cam On' : 'Câmera';
 
-      if (whatsappModeBtn) {
-        whatsappModeBtn.setAttribute('aria-pressed', String(whatsappMode));
+      if (remoteInitial) {
+        remoteInitial.textContent = (partnerName || 'C').trim().charAt(0).toUpperCase() || 'C';
       }
 
-      if (remoteInitial) {
-        remoteInitial.textContent = (partnerName || 'A').trim().charAt(0).toUpperCase() || 'A';
-      }
-      if (remoteExternalBadge) {
-        remoteExternalBadge.hidden = !partnerExternalMode;
-      }
-      if (hudPartnerVoiceBadge) {
-        if (whatsappMode || partnerExternalMode) {
-          hudPartnerVoiceBadge.textContent = 'Ligação externa 📱';
-          hudPartnerVoiceBadge.hidden = false;
-        } else {
-          hudPartnerVoiceBadge.hidden = true;
-        }
-      }
+      // A remote video track only carries an image while it is live AND unmuted (receiving frames).
+      const remoteLiveVideo = Boolean(
+        remoteStream &&
+          remoteStream.getVideoTracks().some((t) => t.readyState === 'live' && !t.muted)
+      );
 
       if (remotePlaceholder) {
-        const hasLiveTrack =
-          remoteStream && remoteStream.getVideoTracks().some((t) => t.readyState === 'live');
-        remotePlaceholder.hidden = Boolean(hasLiveTrack);
+        remotePlaceholder.hidden = remoteLiveVideo;
       }
 
       if (localVideo) {
@@ -346,17 +330,19 @@
       }
 
       const showPip = Boolean(
-        camActive || remoteLiveVideo || partnerHasAudio || partnerMicActive || micActive || partnerExternalMode
+        camActive || micActive || partnerMicActive || partnerHasAudio || partnerHasVideo || remoteLiveVideo
       );
       if (callPipOverlay) {
+        const wasHidden = callPipOverlay.hidden;
         callPipOverlay.hidden = !showPip;
+        if (showPip && wasHidden && pipLayout) {
+          applyPipLayout();
+        }
       }
 
       if (callStatusBadge) {
         callStatusBadge.classList.remove('is-live');
-        if (whatsappMode) {
-          callStatusBadge.textContent = 'Modo WhatsApp/FaceTime ativo (WebRTC mudo)';
-        } else if (!partnerConnected) {
+        if (!partnerConnected) {
           callStatusBadge.textContent = 'Aguardando outra pessoa entrar...';
         } else if (pc && (pc.connectionState === 'connected' || pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed')) {
           callStatusBadge.textContent = 'Conectado • voz e vídeo prontos';
@@ -382,9 +368,8 @@
     function broadcastCallState() {
       sendWebRtcSignal('call-state', {
         ready: true,
-        micActive: micActive && !whatsappMode,
-        camActive,
-        externalCallMode: whatsappMode
+        micActive,
+        camActive
       });
     }
 
@@ -581,9 +566,6 @@
       const { type, payload } = data;
 
       if (type === 'call-state') {
-        if (payload && typeof payload.externalCallMode === 'boolean') {
-          partnerExternalMode = payload.externalCallMode;
-        }
         if (payload && typeof payload.micActive === 'boolean') {
           partnerMicActive = payload.micActive;
         }
@@ -658,11 +640,6 @@
     }
 
     async function toggleMic() {
-      if (whatsappMode) {
-        onToast?.('Desative o Modo WhatsApp/FaceTime para usar o microfone aqui.', false);
-        return;
-      }
-
       ensureAudioContext();
       if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
         onToast?.('Microfone indisponível neste navegador (precisa de HTTPS ou localhost).', true);
@@ -767,27 +744,291 @@
       broadcastCallState();
     }
 
-    async function setWhatsappMode(enabled) {
-      whatsappMode = Boolean(enabled);
-      if (whatsappMode) {
-        // Fully release hardware mic track so FaceTime/WhatsApp on iPhone is never disrupted
-        if (localAudioTrack) {
-          localAudioTrack.stop();
-          localAudioTrack = null;
+    // ---------------------------------------------------------------------
+    // Free-floating camera window: drag anywhere + resize from any corner
+    // ---------------------------------------------------------------------
+    const PIP_STORAGE_KEY = 'paestream_camera_pip_v1';
+    const PIP_MARGIN = 6;
+    const PIP_MIN_W = 96;
+    const PIP_MIN_H = 68;
+    const PIP_COLLAPSED = 48;
+    let pipLayout = null; // { width, height, anchorX, anchorY } — anchors in [0, 1]
+
+    function clampNum(value, min, max) {
+      if (max < min) return min;
+      return Math.min(max, Math.max(min, value));
+    }
+
+    function clamp01(value) {
+      return clampNum(Number(value) || 0, 0, 1);
+    }
+
+    function getStageSize() {
+      const stage = elements.playerStage;
+      if (!stage) return null;
+      const w = stage.clientWidth;
+      const h = stage.clientHeight;
+      if (!w || !h) return null;
+      return { w, h };
+    }
+
+    function loadPipLayout() {
+      try {
+        const raw = global.localStorage.getItem(PIP_STORAGE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (!parsed) return null;
+        const values = [parsed.width, parsed.height, parsed.anchorX, parsed.anchorY].map(Number);
+        if (!values.every((v) => Number.isFinite(v))) return null;
+        return {
+          width: Math.max(PIP_MIN_W, values[0]),
+          height: Math.max(PIP_MIN_H, values[1]),
+          anchorX: clamp01(values[2]),
+          anchorY: clamp01(values[3])
+        };
+      } catch (_err) {
+        return null;
+      }
+    }
+
+    function savePipLayout() {
+      if (!pipLayout) return;
+      try {
+        global.localStorage.setItem(PIP_STORAGE_KEY, JSON.stringify(pipLayout));
+      } catch (_err) {
+        // Ignore storage restrictions
+      }
+    }
+
+    function layoutFromBox(left, top, boxW, boxH, width, height, size) {
+      const freeX = Math.max(0, size.w - PIP_MARGIN * 2 - boxW);
+      const freeY = Math.max(0, size.h - PIP_MARGIN * 2 - boxH);
+      return {
+        width: Math.max(PIP_MIN_W, width),
+        height: Math.max(PIP_MIN_H, height),
+        anchorX: freeX > 0 ? clamp01((left - PIP_MARGIN) / freeX) : 0,
+        anchorY: freeY > 0 ? clamp01((top - PIP_MARGIN) / freeY) : 0
+      };
+    }
+
+    function captureLayoutFromDom() {
+      const overlay = elements.callPipOverlay;
+      const stage = elements.playerStage;
+      const size = getStageSize();
+      if (!overlay || !stage || !size) return null;
+      const stageRect = stage.getBoundingClientRect();
+      const rect = overlay.getBoundingClientRect();
+      if (!rect.width || !rect.height) return null;
+      return layoutFromBox(
+        rect.left - stageRect.left,
+        rect.top - stageRect.top,
+        rect.width,
+        rect.height,
+        rect.width,
+        rect.height,
+        size
+      );
+    }
+
+    function applyPipLayout() {
+      const overlay = elements.callPipOverlay;
+      const size = getStageSize();
+      if (!overlay || !pipLayout || !size) return;
+      const collapsed = overlay.classList.contains('is-collapsed');
+      const width = clampNum(pipLayout.width, PIP_MIN_W, size.w - PIP_MARGIN * 2);
+      const height = clampNum(pipLayout.height, PIP_MIN_H, size.h - PIP_MARGIN * 2);
+      const boxW = collapsed ? PIP_COLLAPSED : width;
+      const boxH = collapsed ? PIP_COLLAPSED : height;
+      const freeX = Math.max(0, size.w - PIP_MARGIN * 2 - boxW);
+      const freeY = Math.max(0, size.h - PIP_MARGIN * 2 - boxH);
+      overlay.style.width = `${Math.round(width)}px`;
+      overlay.style.height = `${Math.round(height)}px`;
+      overlay.style.left = `${Math.round(PIP_MARGIN + freeX * pipLayout.anchorX)}px`;
+      overlay.style.top = `${Math.round(PIP_MARGIN + freeY * pipLayout.anchorY)}px`;
+      overlay.style.right = 'auto';
+      overlay.style.bottom = 'auto';
+    }
+
+    function setupCameraPipInteractions() {
+      const overlay = elements.callPipOverlay;
+      const stage = elements.playerStage;
+      if (!overlay || !stage) return;
+
+      pipLayout = loadPipLayout();
+      let gesture = null;
+
+      overlay.addEventListener('pointerdown', (e) => {
+        // Never let camera gestures toggle the player HUD underneath.
+        e.stopPropagation();
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+        if (e.target.closest('.pip-collapse-btn')) return;
+        const handle = e.target.closest('[data-resize]');
+        if (handle && overlay.classList.contains('is-collapsed')) return;
+        if (!getStageSize()) return;
+
+        const stageRect = stage.getBoundingClientRect();
+        const rect = overlay.getBoundingClientRect();
+        gesture = {
+          id: e.pointerId,
+          mode: handle ? handle.dataset.resize : 'move',
+          startX: e.clientX,
+          startY: e.clientY,
+          left: rect.left - stageRect.left,
+          top: rect.top - stageRect.top,
+          width: rect.width,
+          height: rect.height,
+          moved: false,
+          current: null
+        };
+        overlay.classList.add('is-interacting');
+        try {
+          overlay.setPointerCapture(e.pointerId);
+        } catch (_err) {
+          // ignore
         }
+        e.preventDefault();
+      });
+
+      overlay.addEventListener('pointermove', (e) => {
+        if (!gesture || e.pointerId !== gesture.id) return;
+        const size = getStageSize();
+        if (!size) return;
+        const dx = e.clientX - gesture.startX;
+        const dy = e.clientY - gesture.startY;
+        if (!gesture.moved && Math.hypot(dx, dy) < 3) return;
+        gesture.moved = true;
+
+        let { left, top, width, height } = gesture;
+        const mode = gesture.mode;
+
+        if (mode === 'move') {
+          left = clampNum(gesture.left + dx, PIP_MARGIN, size.w - PIP_MARGIN - gesture.width);
+          top = clampNum(gesture.top + dy, PIP_MARGIN, size.h - PIP_MARGIN - gesture.height);
+        } else {
+          const right = gesture.left + gesture.width;
+          const bottom = gesture.top + gesture.height;
+          if (mode.includes('e')) {
+            width = clampNum(gesture.width + dx, PIP_MIN_W, size.w - PIP_MARGIN - gesture.left);
+          }
+          if (mode.includes('w')) {
+            width = clampNum(gesture.width - dx, PIP_MIN_W, right - PIP_MARGIN);
+            left = right - width;
+          }
+          if (mode.includes('s')) {
+            height = clampNum(gesture.height + dy, PIP_MIN_H, size.h - PIP_MARGIN - gesture.top);
+          }
+          if (mode.includes('n')) {
+            height = clampNum(gesture.height - dy, PIP_MIN_H, bottom - PIP_MARGIN);
+            top = bottom - height;
+          }
+          overlay.style.width = `${Math.round(width)}px`;
+          overlay.style.height = `${Math.round(height)}px`;
+        }
+
+        overlay.style.left = `${Math.round(left)}px`;
+        overlay.style.top = `${Math.round(top)}px`;
+        overlay.style.right = 'auto';
+        overlay.style.bottom = 'auto';
+        gesture.current = { left, top, width, height };
+      });
+
+      const endGesture = (e) => {
+        if (!gesture || e.pointerId !== gesture.id) return;
+        overlay.classList.remove('is-interacting');
+        try {
+          overlay.releasePointerCapture(e.pointerId);
+        } catch (_err) {
+          // ignore
+        }
+        const size = getStageSize();
+        if (gesture.moved && gesture.current && size) {
+          const c = gesture.current;
+          const collapsed = overlay.classList.contains('is-collapsed');
+          const keepW = collapsed && pipLayout ? pipLayout.width : c.width;
+          const keepH = collapsed && pipLayout ? pipLayout.height : c.height;
+          pipLayout = layoutFromBox(c.left, c.top, c.width, c.height, keepW, keepH, size);
+          savePipLayout();
+          applyPipLayout();
+        } else if (!gesture.moved && overlay.classList.contains('is-collapsed')) {
+          toggleCameraPipCollapsed();
+        }
+        gesture = null;
+      };
+      overlay.addEventListener('pointerup', endGesture);
+      overlay.addEventListener('pointercancel', endGesture);
+
+      const relayout = () => {
+        if (pipLayout) applyPipLayout();
+      };
+      if (typeof global.ResizeObserver === 'function') {
+        try {
+          new global.ResizeObserver(relayout).observe(stage);
+        } catch (_err) {
+          // ignore
+        }
+      }
+      global.addEventListener('resize', relayout);
+      global.addEventListener('orientationchange', relayout);
+      document.addEventListener('fullscreenchange', relayout);
+      document.addEventListener('webkitfullscreenchange', relayout);
+      relayout();
+    }
+
+    function toggleCameraPipCollapsed() {
+      const overlay = elements.callPipOverlay;
+      if (!overlay) return;
+      if (!pipLayout && !overlay.classList.contains('is-collapsed')) {
+        pipLayout = captureLayoutFromDom();
+      }
+      overlay.classList.toggle('is-collapsed');
+      if (pipLayout) {
+        applyPipLayout();
+        savePipLayout();
+      }
+    }
+
+    /**
+     * Called when the page returns to the foreground (mobile background / tab switch).
+     * Resumes audio graph + media elements and reconciles tracks the OS may have killed.
+     */
+    function handleAppResume() {
+      if (audioCtx && audioCtx.state !== 'running') {
+        audioCtx.resume().catch(() => {});
+      }
+      [elements.remoteVideo, elements.localVideo, elements.remoteAudio].forEach((el) => {
+        if (el && el.srcObject) {
+          el.play().catch(() => {});
+        }
+      });
+
+      let changed = false;
+      if (localVideoTrack && localVideoTrack.readyState === 'ended') {
+        localVideoTrack = null;
+        localPreviewStream = null;
+        camActive = false;
+        if (elements.localVideo) elements.localVideo.srcObject = null;
+        if (videoTransceiver) {
+          videoTransceiver.direction = 'recvonly';
+          videoTransceiver.sender.replaceTrack(null).catch(() => {});
+        }
+        changed = true;
+      }
+      if (localAudioTrack && localAudioTrack.readyState === 'ended') {
+        localAudioTrack = null;
+        micActive = false;
         if (audioTransceiver) {
           audioTransceiver.direction = 'recvonly';
-          await audioTransceiver.sender.replaceTrack(null).catch(() => {});
-          scheduleRenegotiation();
+          audioTransceiver.sender.replaceTrack(null).catch(() => {});
         }
-        micActive = false;
-        currentDuckFactor = 1.0;
-        player.setDuckFactor(1.0);
-        setSpeakingIndicator(false);
+        changed = true;
       }
-      syncRemoteAudioRouting();
+      if (changed) {
+        scheduleRenegotiation();
+        broadcastCallState();
+        onToast?.('Câmera/microfone foram pausados pelo sistema. Ative novamente se quiser.', false);
+      }
+      if (pipLayout) applyPipLayout();
       updateCallUi();
-      broadcastCallState();
     }
 
     function setMovieVolumePercent(pct) {
@@ -810,7 +1051,7 @@
 
     function setSessionIdentity(nextRole, displayName) {
       role = nextRole === 'host' ? 'host' : 'guest';
-      myName = displayName || (role === 'host' ? 'Lucas' : 'Amor');
+      myName = displayName || (role === 'host' ? 'Lucas' : 'Convidado');
       joined = true;
       loadRtcConfig()
         .then(() => ensurePeerConnection())
@@ -840,7 +1081,6 @@
         partnerMicActive = false;
         partnerHasVideo = false;
         partnerHasAudio = false;
-        partnerExternalMode = false;
       }
 
       if (partnerConnected && !wasPartnerConnected && joined) {
@@ -857,6 +1097,7 @@
 
     // Wire UI events
     startDuckingMonitor();
+    setupCameraPipInteractions();
 
     elements.toggleMicBtn?.addEventListener('click', () => {
       toggleMic();
@@ -866,12 +1107,9 @@
       toggleCamera();
     });
 
-    elements.whatsappModeBtn?.addEventListener('click', () => {
-      setWhatsappMode(!whatsappMode);
-    });
-
-    elements.pipCollapseBtn?.addEventListener('click', () => {
-      elements.callPipOverlay?.classList.toggle('is-collapsed');
+    elements.pipCollapseBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleCameraPipCollapsed();
     });
 
     elements.movieVolumeSlider?.addEventListener('input', (e) => {
@@ -896,6 +1134,7 @@
       setSessionIdentity,
       updateRoomPresence,
       handleWebRtcSignal,
+      handleAppResume,
       setMovieVolumePercent,
       setVoiceVolumePercent
     };

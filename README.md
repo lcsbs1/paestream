@@ -1,6 +1,6 @@
 # PaeStream
 
-Servidor local de cinema privado (watch party) para 2 pessoas: host escolhe o filme no PC, convidada assiste sincronizado pelo navegador. Inclui HLS via FFmpeg, legendas, WebRTC (voz/camera) e tunel Cloudflare opcional. A conversa e so por voz e camera — sem chat de texto.
+Servidor local de cinema privado (watch party) para 2 pessoas: host escolhe o filme no PC, convidado assiste sincronizado pelo navegador. Inclui HLS via FFmpeg, legendas, WebRTC (voz/camera) e tunel Cloudflare opcional. A conversa e so por voz e camera — sem chat de texto.
 
 ## Requisitos
 
@@ -17,7 +17,7 @@ npm install
 
 Coloque os filmes em `movies/` (mp4, mkv, avi, mov, webm, m4v). Legendas `.srt` / `.vtt` na mesma pasta do filme sao detectadas automaticamente.
 
-Copie `.env.example` para `.env` e configure o TURN (obrigatorio se host e convidada estiverem em redes/cidades diferentes):
+Copie `.env.example` para `.env` e configure o TURN (obrigatorio se host e convidado estiverem em redes/cidades diferentes):
 
 ```env
 PAESTREAM_METERED_APP_NAME=seu-app
@@ -34,16 +34,16 @@ Conta gratis: [Metered Open Relay](https://www.metered.ca/tools/openrelay/) (~20
 1. Rode `iniciar-cinema.bat` ou `npm start`.
 2. No console deve aparecer `TURN ativo (metered)`. Se aparecer `so STUN`, o `.env` nao foi lido ou a key esta errada.
 3. Abra `http://localhost:3000` no PC host (vira host automaticamente).
-4. Escolha o filme e compartilhe o **link Cloudflare HTTPS** da convidada (nao use IP da LAN para mic/camera).
-5. Host mobile: use o QR/link de Host Mobile (codigo de pareamento de uso unico; nao compartilhe com a convidada).
+4. Escolha o filme e compartilhe o **link Cloudflare HTTPS** do convidado (nao use IP da LAN para mic/camera).
+5. Host mobile: use o QR/link de Host Mobile (codigo de pareamento de uso unico; nao compartilhe com o convidado).
 
 ### Voz e camera
 
 O filme/sync usa o tunel Cloudflare. **Voz e camera sao WebRTC P2P** entre os dois navegadores e **nao** passam pelo tunel. Por isso o TURN e necessario entre regioes.
 
-1. Os dois entram na sessao (host em `localhost`, convidada no link `https://...` do Cloudflare).
+1. Os dois entram na sessao (host em `localhost`, convidado no link `https://...` do Cloudflare).
 2. Cada um clica **Mic** (e **Camera** se quiser). Um lado sozinho ja deve ser ouvido pelo outro.
-3. Deixe **Modo WhatsApp/FaceTime** desligado para usar a voz do PaeStream.
+3. A janela da camera pode ser arrastada para qualquer lugar e redimensionada pelos cantos (posicao/tamanho ficam salvos).
 4. O badge da chamada deve ir para algo como `Conectado` / `TURN ativo`.
 
 Alternativas de TURN (em vez do Metered):
@@ -75,7 +75,7 @@ npm start
 
 - Acoes de host exigem token; `/api/movies` tambem.
 - Respostas publicas nao incluem caminhos absolutos do disco.
-- Link de convidada da acesso a sessao (filme + voz/camera). Trate como secreto de sessao.
+- Link do convidado da acesso a sessao (filme + voz/camera). Trate como secreto de sessao.
 - Token longo nao vai mais na URL do host mobile.
 
 ## Estrutura
